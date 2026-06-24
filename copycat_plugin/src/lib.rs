@@ -278,9 +278,14 @@ impl Plugin for Copycat {
                                     ui.horizontal(|ui| {
                                         ui.label("Model Path:");
                                         if ui.button("Browse...").clicked() {
-                                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                                *params.model_dir.lock() = path.to_string_lossy().to_string();
-                                            }
+                                            let params_clone = params.clone();
+                                            let ctx_clone = egui_ctx.clone();
+                                            std::thread::spawn(move || {
+                                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                                    *params_clone.model_dir.lock() = path.to_string_lossy().to_string();
+                                                    ctx_clone.request_repaint();
+                                                }
+                                            });
                                         }
                                     });
                                     let current_model_dir = params.model_dir.lock().clone();
