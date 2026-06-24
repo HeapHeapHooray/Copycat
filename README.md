@@ -1,8 +1,7 @@
 # Copycat — AI Voice-to-MIDI
 
 A VST3/CLAP plugin that transcribes vocal audio into MIDI notes using
-[GAME](https://github.com/openvpi/GAME) (a generative AI model for multi-instrument
-music transcription). Built with Gemini and Deepseek 🚀
+[GAME](https://github.com/openvpi/GAME).
 
 Built with [nih-plug](https://github.com/robbert-vdh/nih-plug).
 
@@ -10,36 +9,57 @@ Built with [nih-plug](https://github.com/robbert-vdh/nih-plug).
 
 - Voice-to-MIDI transcription via ONNX neural network models
 - Record audio from DAW input or load audio files (WAV, FLAC, MP3, OGG)
+- Real-time MIDI note output during DAW playback
 - Piano roll visualization with note names
-- Export transcribed MIDI to file
-- Adjustable BPM, segmentation, and pitch estimation parameters
-- D3PM diffusion steps control for transcription quality
+- Export MIDI to file or temp folder for drag-and-drop into DAW
+- OLE drag-and-drop on Windows
+- Adjustable BPM, segmentation, pitch estimation, and diffusion steps
 - Language hint support (English, Japanese, Cantonese, Mandarin)
 - Works on Wine (GUI via OpenGL 2.1 compatibility)
 
+## Pre-built binaries
+
+Download from [GitHub Releases](https://github.com/openvpi/Copycat/releases).
+
 ## Build
 
-Requires Rust and the mingw-w64 toolchain for Windows targets:
+### Linux
+
+```bash
+cargo xtask bundle copycat --release
+```
+
+### Windows (native, recommended)
+
+```powershell
+cargo xtask bundle copycat --release --target x86_64-pc-windows-msvc
+```
+
+### Windows (cross-compile from Linux)
 
 ```bash
 rustup target add x86_64-pc-windows-gnu
-sudo apt install mingw-w64  # or equivalent
-```
-
-Then:
-
-```bash
-cd copycat
+sudo apt install mingw-w64
 cargo xtask bundle copycat --release --target x86_64-pc-windows-gnu
 ```
 
-Output goes to `target/bundled/`:
-- `copycat.clap` — CLAP plugin
-- `copycat.vst3` — VST3 plugin (CLAP recommended on Wine)
+`onnxruntime.dll` is downloaded automatically by the build script for Windows targets.
+
+### GitHub Actions
+
+Push to `main` or open a PR — CI builds both Linux and Windows
+(`.github/workflows/build.yml`).
+
+## Output
+
+`target/bundled/` contains:
+- `copycat.clap` — CLAP plugin (recommended on Wine)
+- `copycat.vst3` — VST3 plugin
+- `onnxruntime.dll` — ONNX Runtime (Windows only)
 
 ## Notes
 
-- The `nih-plug-patched/` directory is a local fork with OpenGL 2.1 fallback
-  (GUI compatibility on Wine) and `catch_unwind` wrappers on FFI entry points.
-- The ONNX transcription engine (`ort`) is loaded dynamically at runtime;
-  `onnxruntime.dll` must be present next to the plugin when transcribing.
+- `nih-plug-patched/` is a local fork with OpenGL 2.1 fallback for Wine
+  and `catch_unwind` wrappers on all FFI entry points.
+- ONNX Runtime is loaded dynamically; place `onnxruntime.dll` next to the
+  plugin when transcribing (auto-downloaded during build).

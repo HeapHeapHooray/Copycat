@@ -1,0 +1,83 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo xtask bundle copycat --release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: copycat-linux
+          path: target/bundled/
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add MSVC target
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Build
+        shell: pwsh
+        run: cargo xtask bundle copycat --release --target x86_64-pc-windows-msvc
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: copycat-windows
+          path: target/bundled/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: copycat-linux
+          path: release/linux
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: copycat-windows
+          path: release/windows
+
+      - name: Package
+        run: |
+          cd release
+          mv linux copycat-linux
+          mv windows copycat-windows
+          tar czf copycat-linux.tar.gz copycat-linux
+          zip -r copycat-windows.zip copycat-windows
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/copycat-linux.tar.gz
+            release/copycat-windows.zip
+          generate_release_notes: true
