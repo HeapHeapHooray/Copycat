@@ -534,17 +534,19 @@ impl Plugin for Copycat {
                                              let mut buffer = Vec::new();
                                              match write_midi_to_buffer(&mut buffer, notes, tempo) {
                                                  Ok(_) => {
-                                                     #[cfg(target_os = "windows")]
-                                                     {
-                                                         match copy_midi_to_clipboard(&buffer) {
-                                                             Ok(_) => *shared_state.status.lock() = "MIDI notes copied to clipboard!".to_string(),
-                                                             Err(e) => *shared_state.status.lock() = format!("Clipboard error: {}", e),
-                                                         }
-                                                     }
-                                                     #[cfg(not(target_os = "windows"))]
-                                                     {
-                                                         *shared_state.status.lock() = "Clipboard copying not supported on this platform".to_string();
-                                                     }
+                                                     match copy_midi_to_clipboard(&buffer) {
+                                                          Ok(_) => {
+                                                              #[cfg(target_os = "windows")]
+                                                              {
+                                                                  *shared_state.status.lock() = "MIDI notes copied to clipboard (FL Studio compatible)!".to_string();
+                                                              }
+                                                              #[cfg(not(target_os = "windows"))]
+                                                              {
+                                                                  *shared_state.status.lock() = "MIDI notes copied to clipboard (audio/midi)!".to_string();
+                                                              }
+                                                          }
+                                                          Err(e) => *shared_state.status.lock() = format!("Clipboard error: {}", e),
+                                                      }
                                                  }
                                                  Err(e) => *shared_state.status.lock() = format!("MIDI error: {}", e),
                                              }
@@ -995,6 +997,50 @@ fn copy_midi_to_clipboard(midi_bytes: &[u8]) -> Result<(), String> {
         CloseClipboard();
         Ok(())
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn copy_midi_to_clipboard(midi_bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // 1. Try Wayland (wl-copy) if WAYLAND_DISPLAY is set
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        if let Ok(mut child) = Command::new("wl-copy")
+            .args(["--type", "audio/midi"])
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(midi_bytes);
+            }
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // 2. Try X11 (xclip)
+    if std::env::var("DISPLAY").is_ok() {
+        if let Ok(mut child) = Command::new("xclip")
+            .args(["-selection", "clipboard", "-t", "audio/midi"])
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(midi_bytes);
+            }
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Err("Could not find wl-copy or xclip to copy MIDI data".to_string())
 }
 
 // Background ONNX transcription runner
