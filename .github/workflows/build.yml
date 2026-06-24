@@ -75,6 +75,21 @@ jobs:
         run: |
           Copy-Item target/x86_64-pc-windows-msvc/release/copycat_installer.exe target/bundled/
 
+      - name: Copy onnxruntime to bundles
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path target -Filter onnxruntime.dll -Recurse | Select-Object -First 1
+          if ($dll) {
+            Copy-Item $dll.FullName target/bundled/
+            $vst3dirs = @(
+              "target/bundled/copycat.vst3/Contents/x64-win",
+              "target/bundled/copycat.vst3/Contents/x86_64-win"
+            )
+            foreach ($d in $vst3dirs) {
+              if (Test-Path $d) { Copy-Item $dll.FullName $d/ }
+            }
+          }
+
 
 
       - name: Upload artifacts
