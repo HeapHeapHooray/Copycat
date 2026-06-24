@@ -14,7 +14,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Clone patched nih-plug
-        run: git clone https://github.com/HeapHeapHooray/nih-plug-patched.git nih-plug-patched
+        run: |
+          rm -rf nih-plug-patched
+          git clone https://github.com/HeapHeapHooray/nih-plug-patched.git nih-plug-patched
 
       - name: Install deps
         run: |
@@ -48,7 +50,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Clone patched nih-plug
-        run: git clone https://github.com/HeapHeapHooray/nih-plug-patched.git nih-plug-patched
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force nih-plug-patched -ErrorAction SilentlyContinue
+          git clone https://github.com/HeapHeapHooray/nih-plug-patched.git nih-plug-patched
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
