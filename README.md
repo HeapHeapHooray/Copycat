@@ -29,7 +29,7 @@ The package includes a one-click CLI installer (`copycat_installer`) that automa
 2. Run `copycat_installer.exe`.
    - *Note: If you run it normally, it will install the plugin to your user-local directories. Run it as Administrator if you want to install it system-wide.*
 3. The installer will:
-   - Copy `copycat.clap` and `onnxruntime.dll` to your CLAP directory (e.g. `C:\Program Files\Common Files\CLAP`).
+   - Copy `copycat.clap` to your CLAP directory (e.g. `C:\Program Files\Common Files\CLAP`).
    - Copy `copycat.vst3` directory to your VST3 directory (e.g. `C:\Program Files\Common Files\VST3`).
    - Download the model checkpoint (`GAME-1.0.3-large-onnx`) and extract it to:  
      `C:\Users\<YourUsername>\copycat\models\GAME-1.0.3-large-onnx`
@@ -91,7 +91,6 @@ Copy-Item target/x86_64-pc-windows-msvc/release/copycat_installer.exe target/bun
 - `copycat_installer` (or `copycat_installer.exe`)
 - `copycat.clap`
 - `copycat.vst3/`
-- `onnxruntime.dll` (Windows only)
 
 ### GitHub Actions Build
 The project uses GitHub Actions (`.github/workflows/build.yml`) to automatically compile the plugin and installer binaries for both platforms on every tag release (e.g. pushing a tag starting with `v*`).
@@ -101,4 +100,3 @@ The project uses GitHub Actions (`.github/workflows/build.yml`) to automatically
 ## Notes
 
 - `nih-plug-patched/` is a local fork with OpenGL 2.1 fallback for Wine compatibility and `catch_unwind` wrappers on all FFI entry points to prevent host crashes.
-- The VST/CLAP plugin dynamically loads ONNX Runtime; on Windows, `onnxruntime.dll` must sit in the same directory as the plugin file.

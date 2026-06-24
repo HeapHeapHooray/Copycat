@@ -125,8 +125,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> 
 fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::Result<()> {
     let clap_src = src_dir.join("copycat.clap");
     let vst3_src = src_dir.join("copycat.vst3");
-    #[cfg(target_os = "windows")]
-    let dll_src = src_dir.join("onnxruntime.dll");
+
 
     let mut clap_installed = false;
     let mut vst3_installed = false;
@@ -160,11 +159,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
                 Ok(_) => {
                     match robust_copy(&clap_src, &target_sys) {
                         Ok(_) => {
-                            if dll_src.exists() {
-                                if let Err(e) = robust_copy(&dll_src, &sys_clap_dir.join("onnxruntime.dll")) {
-                                    errors.push(format!("Failed to copy onnxruntime.dll to system CLAP: {}", e));
-                                }
-                            }
+
                             *status.lock() = "CLAP installed to system CLAP directory.".to_string();
                             success = true;
                         }
@@ -186,11 +181,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
                         Ok(_) => {
                             match robust_copy(&clap_src, &target_user) {
                                 Ok(_) => {
-                                    if dll_src.exists() {
-                                        if let Err(e) = robust_copy(&dll_src, &ucd.join("onnxruntime.dll")) {
-                                            errors.push(format!("Failed to copy onnxruntime.dll to user CLAP: {}", e));
-                                        }
-                                    }
+
                                     *status.lock() = "CLAP installed to user CLAP directory.".to_string();
                                     success = true;
                                 }
