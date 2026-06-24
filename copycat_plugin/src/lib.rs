@@ -1011,9 +1011,17 @@ fn run_transcription(
     t0: f32,
 ) -> Result<Vec<NoteInfo>, String> {
     let model_dir = std::path::PathBuf::from(&model_dir_str);
-    #[cfg(all(target_os = "windows", target_env = "gnu"))]
-    let _ = ort::init_from("onnxruntime.dll").commit();
-    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
+    #[cfg(target_os = "windows")]
+    {
+        let dll_path = if let Some(mut path) = process_path::get_dylib_path() {
+            path.pop();
+            path.join("onnxruntime.dll")
+        } else {
+            std::path::PathBuf::from("onnxruntime.dll")
+        };
+        let _ = ort::init_from(dll_path.to_string_lossy().to_string()).commit();
+    }
+    #[cfg(not(target_os = "windows"))]
     let _ = ort::init().commit();
     let config_path = model_dir.join("config.json");
     if !config_path.exists() {

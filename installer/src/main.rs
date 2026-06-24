@@ -1,11 +1,108 @@
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use parking_lot::Mutex;
 use eframe::egui;
 
 const CHECKPOINT_URL: &str = "https://github.com/openvpi/GAME/releases/download/v1.0.3/GAME-1.0.3-large-onnx.zip";
+
+// A wrapper that retries on "Overlapped I/O pending" (997) or "Sharing violation" (32)
+pub struct RobustIO<T> {
+    inner: T,
+}
+
+impl<T> RobustIO<T> {
+    pub fn new(inner: T) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T: Read> Read for RobustIO<T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut retries = 5;
+        let mut delay = std::time::Duration::from_millis(50);
+        loop {
+            match self.inner.read(buf) {
+                Ok(n) => return Ok(n),
+                Err(e) => {
+                    let code = e.raw_os_error();
+                    if (code == Some(997) || code == Some(32)) && retries > 0 {
+                        retries -= 1;
+                        std::thread::sleep(delay);
+                        delay *= 2;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
+impl<T: Write> Write for RobustIO<T> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut retries = 5;
+        let mut delay = std::time::Duration::from_millis(50);
+        loop {
+            match self.inner.write(buf) {
+                Ok(n) => return Ok(n),
+                Err(e) => {
+                    let code = e.raw_os_error();
+                    if (code == Some(997) || code == Some(32)) && retries > 0 {
+                        retries -= 1;
+                        std::thread::sleep(delay);
+                        delay *= 2;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let mut retries = 5;
+        let mut delay = std::time::Duration::from_millis(50);
+        loop {
+            match self.inner.flush() {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    let code = e.raw_os_error();
+                    if (code == Some(997) || code == Some(32)) && retries > 0 {
+                        retries -= 1;
+                        std::thread::sleep(delay);
+                        delay *= 2;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
+impl<T: Seek> Seek for RobustIO<T> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        let mut retries = 5;
+        let mut delay = std::time::Duration::from_millis(50);
+        loop {
+            match self.inner.seek(pos) {
+                Ok(n) => return Ok(n),
+                Err(e) => {
+                    let code = e.raw_os_error();
+                    if (code == Some(997) || code == Some(32)) && retries > 0 {
+                        retries -= 1;
+                        std::thread::sleep(delay);
+                        delay *= 2;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
 
 // Robust filesystem helpers that retry on "Overlapped I/O pending" (997) or "Sharing violation" (32)
 fn robust_create_dir_all(path: &Path) -> std::io::Result<()> {
@@ -16,7 +113,7 @@ fn robust_create_dir_all(path: &Path) -> std::io::Result<()> {
             Ok(_) => return Ok(()),
             Err(e) => {
                 let code = e.raw_os_error();
-                if code == Some(997) && retries > 0 {
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
                     retries -= 1;
                     std::thread::sleep(delay);
                     delay *= 2;
@@ -36,7 +133,7 @@ fn robust_copy(from: &Path, to: &Path) -> std::io::Result<u64> {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
                 let code = e.raw_os_error();
-                if code == Some(997) && retries > 0 {
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
                     retries -= 1;
                     std::thread::sleep(delay);
                     delay *= 2;
@@ -56,7 +153,27 @@ fn robust_file_create(path: &Path) -> std::io::Result<fs::File> {
             Ok(file) => return Ok(file),
             Err(e) => {
                 let code = e.raw_os_error();
-                if code == Some(997) && retries > 0 {
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+fn robust_file_open(path: &Path) -> std::io::Result<fs::File> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match fs::File::open(path) {
+            Ok(file) => return Ok(file),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
                     retries -= 1;
                     std::thread::sleep(delay);
                     delay *= 2;
@@ -108,11 +225,99 @@ fn robust_remove_file(path: &Path) -> std::io::Result<()> {
     }
 }
 
+fn robust_read_dir(path: &Path) -> std::io::Result<fs::ReadDir> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match fs::read_dir(path) {
+            Ok(read_dir) => return Ok(read_dir),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+fn robust_file_type(entry: &fs::DirEntry) -> io::Result<fs::FileType> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match entry.file_type() {
+            Ok(ty) => return Ok(ty),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+fn robust_exists(path: &Path) -> bool {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match path.metadata() {
+            Ok(_) => return true,
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return false;
+                }
+                return false;
+            }
+        }
+    }
+}
+
+fn robust_is_dir(path: &Path) -> bool {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match path.metadata() {
+            Ok(meta) => return meta.is_dir(),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return false;
+            }
+        }
+    }
+}
+
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
     robust_create_dir_all(dst.as_ref())?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
+    let mut entries = robust_read_dir(src.as_ref())?;
+    loop {
+        let entry = match entries.next() {
+            Some(Ok(entry)) => entry,
+            Some(Err(e)) => return Err(e),
+            None => break,
+        };
+        let ty = robust_file_type(&entry)?;
         if ty.is_dir() {
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
         } else {
@@ -127,7 +332,6 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
     let vst3_src = src_dir.join("copycat.vst3");
     #[cfg(target_os = "windows")]
     let dll_src = src_dir.join("onnxruntime.dll");
-
 
     let mut clap_installed = false;
     let mut vst3_installed = false;
@@ -146,7 +350,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
             });
 
         // 1. CLAP Installation
-        if clap_src.exists() {
+        if robust_exists(&clap_src) {
             let sys_clap_dir = PathBuf::from(&common_files).join("CLAP");
             let user_clap_dir = local_app_data.as_ref().map(|lad| PathBuf::from(lad).join("Programs").join("Common").join("CLAP"));
 
@@ -161,7 +365,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
                 Ok(_) => {
                     match robust_copy(&clap_src, &target_sys) {
                         Ok(_) => {
-                            if dll_src.exists() {
+                            if robust_exists(&dll_src) {
                                 if let Err(e) = robust_copy(&dll_src, &sys_clap_dir.join("onnxruntime.dll")) {
                                     errors.push(format!("Failed to copy onnxruntime.dll to system CLAP: {}", e));
                                 }
@@ -187,7 +391,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
                         Ok(_) => {
                             match robust_copy(&clap_src, &target_user) {
                                 Ok(_) => {
-                                    if dll_src.exists() {
+                                    if robust_exists(&dll_src) {
                                         if let Err(e) = robust_copy(&dll_src, &ucd.join("onnxruntime.dll")) {
                                             errors.push(format!("Failed to copy onnxruntime.dll to user CLAP: {}", e));
                                         }
@@ -215,7 +419,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
         }
 
         // 2. VST3 Installation
-        if vst3_src.exists() && vst3_src.is_dir() {
+        if robust_exists(&vst3_src) && robust_is_dir(&vst3_src) {
             let sys_vst3_dir = PathBuf::from(&common_files).join("VST3");
             let user_vst3_dir = local_app_data.as_ref().map(|lad| PathBuf::from(lad).join("Programs").join("Common").join("VST3"));
 
@@ -266,7 +470,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
         let home_path = Path::new(&home);
 
         // 1. CLAP Installation
-        if clap_src.exists() {
+        if robust_exists(&clap_src) {
             let clap_dir = home_path.join(".clap");
             let target = clap_dir.join("copycat.clap");
             *status.lock() = "Installing CLAP to ~/.clap/".to_string();
@@ -276,7 +480,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
         }
 
         // 2. VST3 Installation
-        if vst3_src.exists() && vst3_src.is_dir() {
+        if robust_exists(&vst3_src) && robust_is_dir(&vst3_src) {
             let vst3_dir = home_path.join(".vst3");
             let target = vst3_dir.join("copycat.vst3");
             *status.lock() = "Installing VST3 to ~/.vst3/".to_string();
@@ -299,28 +503,37 @@ fn download_and_extract_model(
     download_progress: &Arc<Mutex<f32>>,
     extract_progress: &Arc<Mutex<f32>>,
 ) -> anyhow::Result<()> {
+    use anyhow::Context;
     let models_base_dir = Path::new(model_install_path);
-    robust_create_dir_all(models_base_dir)?;
+    robust_create_dir_all(models_base_dir)
+        .context("Failed to create models directory")?;
     let zip_path = models_base_dir.join("download.zip");
 
     *status.lock() = "Connecting to download server...".to_string();
-    let response = ureq::get(CHECKPOINT_URL).call()?;
+    let response = ureq::get(CHECKPOINT_URL)
+        .call()
+        .context("Failed to connect to the checkpoint download URL")?;
     
     let total_size = response
         .header("Content-Length")
         .and_then(|len| len.parse::<usize>().ok());
 
-    let mut file = robust_file_create(&zip_path)?;
-    let mut reader = response.into_reader();
+    let mut file = RobustIO::new(
+        robust_file_create(&zip_path)
+            .context("Failed to create temporary download ZIP file")?
+    );
+    let mut reader = RobustIO::new(response.into_reader());
     let mut buffer = [0; 65536];
     let mut downloaded = 0;
 
     loop {
-        let bytes_read = reader.read(&mut buffer)?;
+        let bytes_read = reader.read(&mut buffer)
+            .context("Failed reading from download stream")?;
         if bytes_read == 0 {
             break;
         }
-        file.write_all(&buffer[..bytes_read])?;
+        file.write_all(&buffer[..bytes_read])
+            .context("Failed writing chunk to temporary download ZIP file")?;
         downloaded += bytes_read;
 
         if let Some(total) = total_size {
@@ -334,8 +547,10 @@ fn download_and_extract_model(
     *download_progress.lock() = 1.0;
 
     *status.lock() = "Download complete. Extracting model...".to_string();
-    let zip_file = fs::File::open(&zip_path)?;
-    let mut archive = zip::ZipArchive::new(zip_file)?;
+    let zip_file = robust_file_open(&zip_path)
+        .context("Failed to open downloaded ZIP file for extraction")?;
+    let mut archive = zip::ZipArchive::new(RobustIO::new(zip_file))
+        .context("Failed to parse downloaded ZIP archive")?;
 
     let mut has_toplevel = false;
     if archive.len() > 0 {
@@ -352,33 +567,42 @@ fn download_and_extract_model(
         models_base_dir.join("GAME-1.0.3-large-onnx")
     };
 
-    robust_create_dir_all(&extract_dest)?;
+    robust_create_dir_all(&extract_dest)
+        .context("Failed to create destination directory for extraction")?;
     let archive_len = archive.len();
 
     for i in 0..archive_len {
-        let mut file = archive.by_index(i)?;
+        let mut file = archive.by_index(i)
+            .with_context(|| format!("Failed to read archive index {}", i))?;
         let outpath = match file.enclosed_name() {
             Some(path) => extract_dest.join(path),
             None => continue,
         };
 
         if file.name().ends_with('/') {
-            robust_create_dir_all(&outpath)?;
+            robust_create_dir_all(&outpath)
+                .with_context(|| format!("Failed to create extracted directory {:?}", outpath))?;
         } else {
             if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    robust_create_dir_all(p)?;
+                if !robust_exists(p) {
+                    robust_create_dir_all(p)
+                        .with_context(|| format!("Failed to create parent directory {:?}", p))?;
                 }
             }
-            let mut outfile = robust_file_create(&outpath)?;
-            io::copy(&mut file, &mut outfile)?;
+            let mut outfile = RobustIO::new(
+                robust_file_create(&outpath)
+                    .with_context(|| format!("Failed to create extracted file {:?}", outpath))?
+            );
+            io::copy(&mut file, &mut outfile)
+                .with_context(|| format!("Failed to write extracted file contents to {:?}", outpath))?;
         }
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Some(mode) = file.unix_mode() {
-                fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
+                fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))
+                    .with_context(|| format!("Failed to set permissions for {:?}", outpath))?;
             }
         }
         
@@ -419,8 +643,8 @@ impl InstallerApp {
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-        let clap_found = exe_dir.join("copycat.clap").exists();
-        let vst3_found = exe_dir.join("copycat.vst3").exists();
+        let clap_found = robust_exists(&exe_dir.join("copycat.clap"));
+        let vst3_found = robust_exists(&exe_dir.join("copycat.vst3"));
 
         let default_parent_dir = {
             #[cfg(target_os = "windows")]

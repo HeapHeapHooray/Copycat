@@ -2,7 +2,7 @@ use std::path::Path;
 
 fn main() {
     let target = std::env::var("TARGET").unwrap_or_default();
-    if !target.contains("windows-gnu") || !target.contains("x86_64") {
+    if !target.contains("windows") || !target.contains("x86_64") {
         return;
     }
 
@@ -34,18 +34,28 @@ fn main() {
 }
 
 fn copy_to_profile(dll: &Path) {
-    let cargo_target = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
-    let profile = std::env::var("PROFILE").unwrap_or("debug".into());
-    let target = std::env::var("TARGET").unwrap_or_default();
+    let out_dir = match std::env::var("OUT_DIR") {
+        Ok(val) => val,
+        Err(_) => return,
+    };
+    let out_path = Path::new(&out_dir);
     
-    let dest = if !target.is_empty() {
-        Path::new(&cargo_target).join(&target).join(&profile).join("onnxruntime.dll")
-    } else {
-        Path::new(&cargo_target).join(&profile).join("onnxruntime.dll")
+    // Walk up 3 levels from OUT_DIR (out -> build/crate-id -> build -> profile)
+    let profile_dir = match out_path.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        Some(p) => p,
+        None => return,
     };
     
-    let _ = std::fs::create_dir_all(dest.parent().unwrap());
-    let _ = std::fs::copy(dll, &dest);
+    let dest = profile_dir.join("onnxruntime.dll");
+    
+    eprintln!("copy_to_profile: copying from {:?} to {:?}", dll, dest);
+    if let Err(e) = std::fs::create_dir_all(dest.parent().unwrap()) {
+        eprintln!("copy_to_profile: failed to create dir: {:?}", e);
+    }
+    match std::fs::copy(dll, &dest) {
+        Ok(_) => eprintln!("copy_to_profile: successfully copied dll"),
+        Err(e) => eprintln!("copy_to_profile: failed to copy dll: {:?}", e),
+    }
 }
 
 fn download_curl(url: &str, dest: &Path) -> bool {
