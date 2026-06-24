@@ -1058,8 +1058,8 @@ fn drag_midi_file(path: &std::path::Path) {
     unsafe extern "system" fn do_get_data(
         this: *mut c_void, pformatetc: *const c_void, pmedium: *mut c_void,
     ) -> i32 {
-        let fmt = *(pformatetc as *const u32);
-        if fmt != CF_HDROP { return S_FALSE; }
+        let fmt = *(pformatetc as *const u16);
+        if fmt != CF_HDROP as u16 { return S_FALSE; }
 
         let obj = this as *mut DataObj;
         let wide_len = (*obj).path_len - 1;
@@ -1087,7 +1087,12 @@ fn drag_midi_file(path: &std::path::Path) {
     }
     // Stub implementations for other IDataObject methods
     unsafe extern "system" fn do_get_data_here(_: *mut c_void, _: *const c_void, _: *mut c_void) -> i32 { S_FALSE }
-    unsafe extern "system" fn do_query_get_data(_: *mut c_void, _: *const c_void) -> i32 { S_FALSE }
+    unsafe extern "system" fn do_query_get_data(
+        _this: *mut c_void, pformatetc: *const c_void,
+    ) -> i32 {
+        let fmt = *(pformatetc as *const u16);
+        if fmt == CF_HDROP as u16 { S_OK } else { DV_E_FORMATETC }
+    }
     unsafe extern "system" fn do_get_canonical(_: *mut c_void, _: *const c_void, _: *mut c_void) -> i32 { E_NOTIMPL }
     unsafe extern "system" fn do_set_data(_: *mut c_void, _: *const c_void, _: *mut c_void, _: i32) -> i32 { S_FALSE }
     unsafe extern "system" fn do_enum_fmt(this: *mut c_void, _direction: u32, ppenum: *mut *mut c_void) -> i32 {
@@ -1185,7 +1190,10 @@ fn drag_midi_file(path: &std::path::Path) {
             *pdwEffect = DROPEFFECT_COPY;
             S_OK
         }
-        unsafe extern "system" fn ds_give_feedback(_: *mut c_void, _: u32) -> i32 { S_OK }
+        unsafe extern "system" fn ds_give_feedback(_: *mut c_void, _: u32) -> i32 {
+            const DRAGDROP_S_USEDEFAULTCURSORS: i32 = 0x00040102;
+            DRAGDROP_S_USEDEFAULTCURSORS
+        }
 
         let ds_vtbl = Box::into_raw(Box::new(IDropSourceVtbl {
             query_interface: ds_query_interface,
