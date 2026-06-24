@@ -10,6 +10,48 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use parking_lot::Mutex;
 
+fn get_default_model_dir() -> Option<String> {
+    let dylib_path = process_path::get_dylib_path()?;
+    let mut current_dir = dylib_path.parent();
+    
+    for _ in 0..5 {
+        if let Some(dir) = current_dir {
+            let checkpoints_dir = dir.join("checkpoints");
+            if checkpoints_dir.is_dir() {
+                let game_model = checkpoints_dir.join("GAME-1.0-large-onnx");
+                if game_model.is_dir() {
+                    return Some(game_model.to_string_lossy().to_string());
+                }
+                return Some(checkpoints_dir.to_string_lossy().to_string());
+            }
+            current_dir = dir.parent();
+        } else {
+            break;
+        }
+    }
+    
+    let mut root_dir = dylib_path.parent()?;
+    let mut current = root_dir;
+    for _ in 0..4 {
+        if let Some(name) = current.file_name() {
+            let name_str = name.to_string_lossy();
+            if name_str.ends_with(".vst3") || name_str.ends_with(".clap") {
+                if let Some(parent) = current.parent() {
+                    root_dir = parent;
+                    break;
+                }
+            }
+        }
+        if let Some(parent) = current.parent() {
+            current = parent;
+        } else {
+            break;
+        }
+    }
+    
+    Some(root_dir.join("checkpoints").join("GAME-1.0-large-onnx").to_string_lossy().to_string())
+}
+
 // Note struct representing transcribed voiced notes
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoteInfo {
@@ -111,7 +153,9 @@ impl Default for CopycatParams {
                 },
             ),
 
-            model_dir: parking_lot::Mutex::new(String::new()),
+            model_dir: parking_lot::Mutex::new(
+                get_default_model_dir().unwrap_or_default()
+            ),
 
             editor_state: EguiState::from_size(750, 600),
         }
@@ -402,6 +446,8 @@ impl Plugin for Copycat {
                                     let model_dir_str = params.model_dir.lock().clone();
                                     if model_dir_str.is_empty() {
                                         *shared_state.status.lock() = "Error: Model path is not selected. Please click 'Browse...' and select the model folder first.".to_string();
+                                    } else if !std::path::Path::new(&model_dir_str).exists() {
+                                        *shared_state.status.lock() = format!("Error: Model path does not exist: {}. Please place the checkpoints there or select a different folder.", model_dir_str);
                                     } else if samples.is_empty() {
                                         *shared_state.status.lock() = "Error: Recording buffer is empty. Record some audio or load a file first.".to_string();
                                     } else {
