@@ -63,14 +63,15 @@ jobs:
       - name: Copy onnxruntime to bundles
         shell: pwsh
         run: |
-          if (Test-Path target/release/onnxruntime.dll) {
-            Copy-Item target/release/onnxruntime.dll target/bundled/
+          $dll = Get-ChildItem -Path target -Filter onnxruntime.dll -Recurse | Select-Object -First 1
+          if ($dll) {
+            Copy-Item $dll.FullName target/bundled/
             $vst3dirs = @(
               "target/bundled/copycat.vst3/Contents/x64-win",
               "target/bundled/copycat.vst3/Contents/x86_64-win"
             )
             foreach ($d in $vst3dirs) {
-              if (Test-Path $d) { Copy-Item target/release/onnxruntime.dll $d/ }
+              if (Test-Path $d) { Copy-Item $dll.FullName $d/ }
             }
           }
 

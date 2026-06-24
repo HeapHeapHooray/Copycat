@@ -1163,9 +1163,6 @@ fn run_transcription(
     t0: f32,
 ) -> Result<Vec<NoteInfo>, String> {
     let model_dir = std::path::PathBuf::from(&model_dir_str);
-    #[cfg(target_os = "windows")]
-    let _ = ort::init_from("onnxruntime.dll").commit();
-    #[cfg(not(target_os = "windows"))]
     let _ = ort::init().commit();
     let config_path = model_dir.join("config.json");
     if !config_path.exists() {
