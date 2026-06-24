@@ -923,7 +923,7 @@ fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> any
         last_time_ticks = offset_ticks;
     }
 
-        let smf = Smf {
+    let smf = Smf {
         header,
         tracks: vec![track],
     };
@@ -932,332 +932,51 @@ fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> any
     Ok(())
 }
 
-// OLE drag-and-drop: initiate a system drag with a MIDI file
+// OLE drag-and-drop: initiate a system drag with a MIDI file using the `drag` crate
 #[cfg(target_os = "windows")]
-#[allow(non_snake_case, dead_code, unused_variables)]
+struct DummyWindow {
+    hwnd: *mut std::ffi::c_void,
+}
+
+#[cfg(target_os = "windows")]
+impl raw_window_handle::HasWindowHandle for DummyWindow {
+    fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        let nz = std::num::NonZeroIsize::new(self.hwnd as isize)
+            .ok_or(raw_window_handle::HandleError::NotSupported)?;
+        let handle = raw_window_handle::Win32WindowHandle::new(nz);
+        let raw_handle = raw_window_handle::RawWindowHandle::Win32(handle);
+        unsafe { Ok(raw_window_handle::WindowHandle::borrow_raw(raw_handle)) }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn drag_midi_file(path: &std::path::Path) {
-    use std::ffi::c_void;
-    use std::ptr::null_mut;
-
-    #[repr(C)]
-    struct FORMATETC {
-        cfFormat: u16,
-        ptd: *mut c_void,
-        dwAspect: u32,
-        lindex: i32,
-        tymed: u32,
-    }
-
-    #[repr(C)]
-    struct STGMEDIUM {
-        tymed: u32,
-        hGlobal: *mut c_void,
-        pUnkForRelease: *mut c_void,
-    }
-
-    // COM interfaces
-    #[repr(C)]
-    struct IDataObjectVtbl {
-        query_interface: unsafe extern "system" fn(*mut c_void, *const c_void, *mut *mut c_void) -> i32,
-        add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
-        release: unsafe extern "system" fn(*mut c_void) -> u32,
-        get_data: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut STGMEDIUM) -> i32,
-        get_data_here: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut STGMEDIUM) -> i32,
-        query_get_data: unsafe extern "system" fn(*mut c_void, *const FORMATETC) -> i32,
-        get_canonical_format_etc: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut FORMATETC) -> i32,
-        set_data: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut STGMEDIUM, i32) -> i32,
-        enum_format_etc: unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> i32,
-        dadvise: unsafe extern "system" fn(*mut c_void, *const FORMATETC, u32, *mut c_void, *mut u32) -> i32,
-        dunadvise: unsafe extern "system" fn(*mut c_void, u32) -> i32,
-        enum_dadvise: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
-    }
-    #[repr(C)]
-    struct DataObj {
-        vtbl: *const IDataObjectVtbl,
-        refcount: u32,
-        path_wide: *mut u16,
-        path_len: usize,
-        path_cap: usize,
-    }
-
-    #[repr(C)]
-    struct IDropSourceVtbl {
-        query_interface: unsafe extern "system" fn(*mut c_void, *const c_void, *mut *mut c_void) -> i32,
-        add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
-        release: unsafe extern "system" fn(*mut c_void) -> u32,
-        query_continue_drag: unsafe extern "system" fn(*mut c_void, i32, u32) -> i32,
-        give_feedback: unsafe extern "system" fn(*mut c_void, u32) -> i32,
-    }
-    #[repr(C)]
-    struct DropSrc { vtbl: *const IDropSourceVtbl, refcount: u32 }
-
-    // IEnumFORMATETC provides a single CF_HDROP format
-    #[repr(C)]
-    struct IEnumFmtVtbl {
-        query_interface: unsafe extern "system" fn(*mut c_void, *const c_void, *mut *mut c_void) -> i32,
-        add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
-        release: unsafe extern "system" fn(*mut c_void) -> u32,
-        next_fn: unsafe extern "system" fn(*mut c_void, u32, *mut FORMATETC, *mut u32) -> i32,
-        skip: unsafe extern "system" fn(*mut c_void, u32) -> i32,
-        reset: unsafe extern "system" fn(*mut c_void) -> i32,
-        clone_fn: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
-    }
-    #[repr(C)]
-    struct EnumFmt { vtbl: *const IEnumFmtVtbl, refcount: u32, pos: u32, count: u32 }
-
-    const GHND: u32 = 0x0042;
-    const CF_HDROP: u32 = 15;
-    const S_OK: i32 = 0;
-    const S_FALSE: i32 = 1;
-    const E_UNEXPECTED: i32 = -2147418113i32; // 0x8000FFFF
-    const DVASPECT_CONTENT: u32 = 1;
-    const TYMED_HGLOBAL: u32 = 1;
-    const DRAGDROP_S_DROP: u32 = 0x00040100;
-    const DRAGDROP_S_CANCEL: u32 = 0x00040101;
-    const E_FAIL: i32 = -2147467259i32; // 0x80004005
-    const E_NOTIMPL: i32 = -2147467263i32; // 0x80004001
-    const DV_E_FORMATETC: i32 = -2147221404i32; // 0x80040064
-    const MK_LBUTTON: i32 = 1;
-    const DROPEFFECT_COPY: u32 = 1;
+    use drag::{DragItem, Image, Options};
 
     extern "system" {
-        fn DoDragDrop(
-            pDataObj: *mut c_void,
-            pDropSource: *mut c_void,
-            dwOKEffect: u32,
-            pdwEffect: *mut u32,
-        ) -> i32;
-        fn OleInitialize(pvReserved: *mut c_void) -> i32;
-        fn OleUninitialize();
-        fn GlobalAlloc(uFlags: u32, dwBytes: usize) -> *mut c_void;
-        fn GlobalLock(hMem: *mut c_void) -> *mut c_void;
-        fn GlobalUnlock(hMem: *mut c_void) -> i32;
-        fn GlobalFree(hMem: *mut c_void) -> *mut c_void;
+        fn GetActiveWindow() -> *mut std::ffi::c_void;
+        fn GetForegroundWindow() -> *mut std::ffi::c_void;
     }
 
-    unsafe {
-        let hr = OleInitialize(null_mut());
-        let initialized = hr >= 0;
+    let mut hwnd = unsafe { GetActiveWindow() };
+    if hwnd.is_null() {
+        hwnd = unsafe { GetForegroundWindow() };
+    }
 
-        let mut wide: Vec<u16> = path.to_string_lossy()
-            .encode_utf16()
-            .chain([0, 0])
-            .collect();
-        wide.shrink_to_fit();
-        let path_wide = wide.as_mut_ptr();
-        let path_len = wide.len();
-        let path_cap = wide.capacity();
-        std::mem::forget(wide); // Defer deallocation until COM release
+    if !hwnd.is_null() {
+        let window = DummyWindow { hwnd };
+        let item = DragItem::Files(vec![path.to_path_buf()]);
+        let preview = Image::Raw(Vec::new());
 
-        // IUnknown for IDataObject
-        unsafe extern "system" fn do_query_interface(_this: *mut c_void, _riid: *const c_void, ppv: *mut *mut c_void) -> i32 {
-            *ppv = _this;
-            let obj = _this as *mut DataObj;
-            let add_ref = (*(*obj).vtbl).add_ref;
-            add_ref(_this);
-            S_OK
-        }
-        unsafe extern "system" fn do_add_ref(this: *mut c_void) -> u32 {
-            let obj = this as *mut DataObj;
-            (*obj).refcount += 1;
-            (*obj).refcount
-        }
-        unsafe extern "system" fn do_release(this: *mut c_void) -> u32 {
-            let obj = this as *mut DataObj;
-            (*obj).refcount -= 1;
-            if (*obj).refcount == 0 {
-                let _vtbl = Box::from_raw((*obj).vtbl as *mut IDataObjectVtbl);
-                let _ = Vec::from_raw_parts((*obj).path_wide, (*obj).path_len, (*obj).path_cap);
-                let _ = Box::from_raw(this as *mut DataObj);
-                0
-            } else {
-                (*obj).refcount
-            }
-        }
-        unsafe extern "system" fn do_get_data(
-            this: *mut c_void, pformatetc: *const FORMATETC, pmedium: *mut STGMEDIUM,
-        ) -> i32 {
-            if pformatetc.is_null() || pmedium.is_null() { return E_UNEXPECTED; }
-            let format = &*pformatetc;
-            if format.cfFormat != CF_HDROP as u16 { return DV_E_FORMATETC; }
-            if (format.tymed & TYMED_HGLOBAL) == 0 { return DV_E_FORMATETC; }
-
-            let obj = this as *mut DataObj;
-            let total_chars = (*obj).path_len;
-
-            #[repr(C)]
-            struct DROPFILES { pFiles: u32, pt: (i32,i32), fNC: i32, fWide: i32 }
-            let drop_size = std::mem::size_of::<DROPFILES>();
-            let total = drop_size + total_chars * 2;
-
-            let h = GlobalAlloc(GHND, total);
-            if h.is_null() { return E_UNEXPECTED; }
-            let ptr = GlobalLock(h) as *mut u8;
-            if ptr.is_null() { GlobalFree(h); return E_UNEXPECTED; }
-
-            (ptr as *mut DROPFILES).write(DROPFILES {
-                pFiles: drop_size as u32, pt: (0,0), fNC: 0, fWide: 1,
-            });
-            std::ptr::copy_nonoverlapping((*obj).path_wide, ptr.add(drop_size) as *mut u16, total_chars);
-            GlobalUnlock(h);
-
-            let med = &mut *pmedium;
-            med.tymed = TYMED_HGLOBAL;
-            med.hGlobal = h;
-            med.pUnkForRelease = std::ptr::null_mut();
-            S_OK
-        }
-        // Stub implementations for other IDataObject methods
-        unsafe extern "system" fn do_get_data_here(_: *mut c_void, _: *const FORMATETC, _: *mut STGMEDIUM) -> i32 { S_FALSE }
-        unsafe extern "system" fn do_query_get_data(
-            _this: *mut c_void, pformatetc: *const FORMATETC,
-        ) -> i32 {
-            if pformatetc.is_null() { return E_UNEXPECTED; }
-            let format = &*pformatetc;
-            if format.cfFormat == CF_HDROP as u16 {
-                if format.tymed == 0 || (format.tymed & TYMED_HGLOBAL) != 0 {
-                    S_OK
-                } else {
-                    DV_E_FORMATETC
-                }
-            } else {
-                DV_E_FORMATETC
-            }
-        }
-        unsafe extern "system" fn do_get_canonical(_: *mut c_void, _: *const FORMATETC, _: *mut FORMATETC) -> i32 { E_NOTIMPL }
-        unsafe extern "system" fn do_set_data(_: *mut c_void, _: *const FORMATETC, _: *mut STGMEDIUM, _: i32) -> i32 { S_FALSE }
-        unsafe extern "system" fn do_enum_fmt(this: *mut c_void, _direction: u32, ppenum: *mut *mut c_void) -> i32 {
-            // IEnumFORMATETC vtbl that provides our CF_HDROP format
-            unsafe extern "system" fn ef_query_interface(_t: *mut c_void, _r: *const c_void, ppv: *mut *mut c_void) -> i32 {
-                *ppv = _t;
-                let e = _t as *mut EnumFmt;
-                let ar = (*(*e).vtbl).add_ref;
-                ar(_t);
-                S_OK
-            }
-            unsafe extern "system" fn ef_add_ref(t: *mut c_void) -> u32 { let o = t as *mut EnumFmt; (*o).refcount += 1; (*o).refcount }
-            unsafe extern "system" fn ef_release(t: *mut c_void) -> u32 {
-                let o = t as *mut EnumFmt; (*o).refcount -= 1;
-                if (*o).refcount == 0 {
-                    let _vtbl = Box::from_raw((*o).vtbl as *mut IEnumFmtVtbl);
-                    let _ = Box::from_raw(t as *mut EnumFmt);
-                    0
-                } else {
-                    (*o).refcount
-                }
-            }
-            unsafe extern "system" fn ef_next(t: *mut c_void, celt: u32, rgelt: *mut FORMATETC, pceltFetched: *mut u32) -> i32 {
-                let o = t as *mut EnumFmt;
-                if (*o).pos >= (*o).count || celt == 0 { if !pceltFetched.is_null() { *pceltFetched = 0; } return S_FALSE; }
-                
-                let fe = rgelt;
-                (*fe).cfFormat = CF_HDROP as u16;
-                (*fe).ptd = std::ptr::null_mut();
-                (*fe).dwAspect = DVASPECT_CONTENT;
-                (*fe).lindex = -1;
-                (*fe).tymed = TYMED_HGLOBAL;
-                
-                (*o).pos += 1;
-                if !pceltFetched.is_null() { *pceltFetched = 1; }
-                S_OK
-            }
-            unsafe extern "system" fn ef_skip(t: *mut c_void, celt: u32) -> i32 {
-                let o = t as *mut EnumFmt;
-                if (*o).pos + celt <= (*o).count { (*o).pos += celt; S_OK } else { S_FALSE }
-            }
-            unsafe extern "system" fn ef_reset(t: *mut c_void) -> i32 { (*(t as *mut EnumFmt)).pos = 0; S_OK }
-            unsafe extern "system" fn ef_clone(t: *mut c_void, ppenum: *mut *mut c_void) -> i32 {
-                let src = t as *mut EnumFmt;
-                let c = Box::into_raw(Box::new(EnumFmt { vtbl: (*src).vtbl, refcount: 1, pos: (*src).pos, count: (*src).count }));
-                *ppenum = c as *mut c_void;
-                S_OK
-            }
-
-            let vtbl = Box::into_raw(Box::new(IEnumFmtVtbl {
-                query_interface: ef_query_interface, add_ref: ef_add_ref, release: ef_release,
-                next_fn: ef_next, skip: ef_skip, reset: ef_reset, clone_fn: ef_clone,
-            }));
-            let enum_fmt = Box::into_raw(Box::new(EnumFmt { vtbl: vtbl as *const IEnumFmtVtbl, refcount: 1, pos: 0, count: 1 }));
-            *ppenum = enum_fmt as *mut c_void;
-            S_OK
-        }
-        unsafe extern "system" fn do_dadvise(_: *mut c_void, _: *const FORMATETC, _: u32, _: *mut c_void, _: *mut u32) -> i32 { S_FALSE }
-        unsafe extern "system" fn do_dunadvise(_: *mut c_void, _: u32) -> i32 { S_FALSE }
-        unsafe extern "system" fn do_enum_dadvise(_: *mut c_void, _: *mut *mut c_void) -> i32 { S_FALSE }
-
-        let ido = Box::into_raw(Box::new(IDataObjectVtbl {
-            query_interface: do_query_interface,
-            add_ref: do_add_ref,
-            release: do_release,
-            get_data: do_get_data,
-            get_data_here: do_get_data_here,
-            query_get_data: do_query_get_data,
-            get_canonical_format_etc: do_get_canonical,
-            set_data: do_set_data,
-            enum_format_etc: do_enum_fmt,
-            dadvise: do_dadvise,
-            dunadvise: do_dunadvise,
-            enum_dadvise: do_enum_dadvise,
-        }));
-        let ido_vtbl: *const IDataObjectVtbl = ido as *const IDataObjectVtbl;
-
-        let data_obj = Box::into_raw(Box::new(DataObj {
-            vtbl: ido_vtbl,
-            refcount: 1,
-            path_wide,
-            path_len,
-            path_cap,
-        }));
-
-        // IDropSource stubs
-        unsafe extern "system" fn ds_query_interface(
-            this: *mut c_void, _: *const c_void, ppv: *mut *mut c_void,
-        ) -> i32 { *ppv = this; let obj = this as *mut DropSrc; let ar = (*(*obj).vtbl).add_ref; ar(this); S_OK }
-        unsafe extern "system" fn ds_add_ref(this: *mut c_void) -> u32 { (*(this as *mut DropSrc)).refcount += 1; (*(this as *mut DropSrc)).refcount }
-        unsafe extern "system" fn ds_release(this: *mut c_void) -> u32 {
-            let obj = this as *mut DropSrc;
-            (*obj).refcount -= 1;
-            let refc = (*obj).refcount;
-            if refc == 0 {
-                let _vtbl = Box::from_raw((*obj).vtbl as *mut IDropSourceVtbl);
-                let _ = Box::from_raw(this as *mut DropSrc);
-            }
-            refc
-        }
-        unsafe extern "system" fn ds_continue_drag(
-            _this: *mut c_void, fEscapePressed: i32, grfKeyState: u32,
-        ) -> i32 {
-            if fEscapePressed != 0 { return DRAGDROP_S_CANCEL as i32; }
-            if (grfKeyState & MK_LBUTTON as u32) == 0 {
-                return DRAGDROP_S_DROP as i32;
-            }
-            S_OK
-        }
-        unsafe extern "system" fn ds_give_feedback(_: *mut c_void, _: u32) -> i32 {
-            const DRAGDROP_S_USEDEFAULTCURSORS: i32 = 0x00040102;
-            DRAGDROP_S_USEDEFAULTCURSORS
-        }
-
-        let ds_vtbl = Box::into_raw(Box::new(IDropSourceVtbl {
-            query_interface: ds_query_interface,
-            add_ref: ds_add_ref,
-            release: ds_release,
-            query_continue_drag: ds_continue_drag,
-            give_feedback: ds_give_feedback,
-        })) as *const IDropSourceVtbl;
-
-        let drop_src = Box::into_raw(Box::new(DropSrc { vtbl: ds_vtbl, refcount: 1 }));
-
-        let mut effect: u32 = 0;
-        DoDragDrop(data_obj as *mut c_void, drop_src as *mut c_void, DROPEFFECT_COPY, &mut effect);
-
-        // Cleanup
-        do_release(data_obj as *mut c_void);
-        ds_release(drop_src as *mut c_void);
-
-        if initialized {
-            OleUninitialize();
-        }
+        let _ = drag::start_drag(
+            &window,
+            item,
+            preview,
+            |_result, _cursor_pos| {
+                // Drag callback
+            },
+            Options::default(),
+        );
     }
 }
 
