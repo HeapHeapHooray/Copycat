@@ -539,7 +539,7 @@ impl Plugin for Copycat {
                                             }
                                         });
                                     }
-                                    if ui.add_enabled(has_notes, egui::Button::new("📋 Copy MIDI")).clicked() {
+                                    if ui.add_enabled(has_notes, egui::Button::new("📋 Copy to Clipboard")).clicked() {
                                          if let Some(ref notes) = *shared_state.transcribed_notes.lock() {
                                              let tempo = params.tempo.value();
                                              let mut buffer = Vec::new();
@@ -560,23 +560,6 @@ impl Plugin for Copycat {
                                                  Err(e) => *shared_state.status.lock() = format!("MIDI error: {}", e),
                                              }
                                          }
-                                    }
-                                    let btn = ui.add_enabled(has_notes, egui::Button::new("🎵 Drag MIDI 🎵").sense(egui::Sense::drag()));
-                                    if btn.drag_started() {
-                                        if let Some(ref notes) = *shared_state.transcribed_notes.lock() {
-                                            let tempo = params.tempo.value();
-                                            let dir = std::env::temp_dir().join("copycat-midi");
-                                            let _ = std::fs::create_dir_all(&dir);
-                                            let path = dir.join("transcription.mid");
-                                            match write_midi(&path, notes, tempo) {
-                                                Ok(_) => {
-                                                    *shared_state.status.lock() = format!("Drag from: {}", path.display());
-                                                    #[cfg(target_os = "windows")]
-                                                    drag_midi_file(&path);
-                                                }
-                                                Err(e) => *shared_state.status.lock() = format!("Error: {}", e),
-                                            }
-                                        }
                                     }
                                 });
                             });
@@ -961,53 +944,7 @@ fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> any
     Ok(())
 }
 
-// OLE drag-and-drop: initiate a system drag with a MIDI file using the `drag` crate
-#[cfg(target_os = "windows")]
-struct DummyWindow {
-    hwnd: *mut std::ffi::c_void,
-}
 
-#[cfg(target_os = "windows")]
-impl raw_window_handle::HasWindowHandle for DummyWindow {
-    fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-        let nz = std::num::NonZeroIsize::new(self.hwnd as isize)
-            .ok_or(raw_window_handle::HandleError::NotSupported)?;
-        let handle = raw_window_handle::Win32WindowHandle::new(nz);
-        let raw_handle = raw_window_handle::RawWindowHandle::Win32(handle);
-        unsafe { Ok(raw_window_handle::WindowHandle::borrow_raw(raw_handle)) }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn drag_midi_file(path: &std::path::Path) {
-    use drag::{DragItem, Image, Options};
-
-    extern "system" {
-        fn GetActiveWindow() -> *mut std::ffi::c_void;
-        fn GetForegroundWindow() -> *mut std::ffi::c_void;
-    }
-
-    let mut hwnd = unsafe { GetActiveWindow() };
-    if hwnd.is_null() {
-        hwnd = unsafe { GetForegroundWindow() };
-    }
-
-    if !hwnd.is_null() {
-        let window = Box::leak(Box::new(DummyWindow { hwnd }));
-        let item = DragItem::Files(vec![path.to_path_buf()]);
-        let preview = Image::Raw(Vec::new());
-
-        let _ = drag::start_drag(
-            window,
-            item,
-            preview,
-            |_result, _cursor_pos| {
-                // Drag callback
-            },
-            Options::default(),
-        );
-    }
-}
 
 #[cfg(target_os = "windows")]
 fn copy_midi_to_clipboard(midi_bytes: &[u8]) -> Result<(), String> {

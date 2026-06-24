@@ -28,6 +28,4 @@ ort-sys = { version = "=2.0.0-rc.9", default-features = false }
 ort = { version = "=2.0.0-rc.9", features = ["ndarray"] }
 ort-sys = "=2.0.0-rc.9"
 
-[target.'cfg(target_os = "windows")'.dependencies]
-drag = "2.1.1"
-raw-window-handle = "0.6"
+
