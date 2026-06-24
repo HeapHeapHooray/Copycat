@@ -111,9 +111,7 @@ impl Default for CopycatParams {
                 },
             ),
 
-            model_dir: parking_lot::Mutex::new(
-                "/home/heap/Documents/voice-to-midi/GAME/checkpoints/GAME-1.0-large-onnx".to_string()
-            ),
+            model_dir: parking_lot::Mutex::new(String::new()),
 
             editor_state: EguiState::from_size(750, 600),
         }
@@ -258,7 +256,9 @@ impl Plugin for Copycat {
                                         }
                                     });
                                     let current_model_dir = params.model_dir.lock().clone();
-                                    let display_path = if current_model_dir.len() > 35 {
+                                    let display_path = if current_model_dir.is_empty() {
+                                        "Please select the model folder".to_string()
+                                    } else if current_model_dir.len() > 35 {
                                         format!("...{}", &current_model_dir[current_model_dir.len() - 32..])
                                     } else {
                                         current_model_dir.clone()
@@ -399,14 +399,16 @@ impl Plugin for Copycat {
 
                                 if transcribe_btn.clicked() {
                                     let samples = shared_state.recording_buffer.lock().clone();
-                                    if samples.is_empty() {
+                                    let model_dir_str = params.model_dir.lock().clone();
+                                    if model_dir_str.is_empty() {
+                                        *shared_state.status.lock() = "Error: Model path is not selected. Please click 'Browse...' and select the model folder first.".to_string();
+                                    } else if samples.is_empty() {
                                         *shared_state.status.lock() = "Error: Recording buffer is empty. Record some audio or load a file first.".to_string();
                                     } else {
                                         shared_state.is_transcribing.store(true, Ordering::SeqCst);
                                         *shared_state.status.lock() = "Running GAME.rs inference engine...".to_string();
 
                                         let state_clone = shared_state.clone();
-                                        let model_dir_str = params.model_dir.lock().clone();
                                         let tempo = params.tempo.value();
                                         let seg_threshold = params.seg_threshold.value();
                                         let est_threshold = params.est_threshold.value();
