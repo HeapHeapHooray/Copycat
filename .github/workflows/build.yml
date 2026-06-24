@@ -36,7 +36,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build
-        run: cargo xtask bundle copycat --release
+        run: |
+          cargo xtask bundle copycat --release
+          cargo build --package copycat_installer --release
+          cp target/release/copycat_installer target/bundled/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -62,8 +65,15 @@ jobs:
         run: rustup target add x86_64-pc-windows-msvc
 
       - name: Build
-        run: cargo xtask bundle copycat --release --target x86_64-pc-windows-msvc
+        run: |
+          cargo xtask bundle copycat --release --target x86_64-pc-windows-msvc
+          cargo build --package copycat_installer --release --target x86_64-pc-windows-msvc
         shell: pwsh
+
+      - name: Copy installer to bundles
+        shell: pwsh
+        run: |
+          Copy-Item target/x86_64-pc-windows-msvc/release/copycat_installer.exe target/bundled/
 
       - name: Copy onnxruntime to bundles
         shell: pwsh
@@ -106,8 +116,8 @@ jobs:
       - name: Package
         run: |
           cd release
-          tar czf copycat-linux.tar.gz linux
-          zip -r copycat-windows.zip windows
+          tar czf copycat-linux.tar.gz -C linux .
+          cd windows && zip -r ../copycat-windows.zip .
 
       - name: Create release
         uses: softprops/action-gh-release@v2

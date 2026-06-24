@@ -11,45 +11,29 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use parking_lot::Mutex;
 
 fn get_default_model_dir() -> Option<String> {
-    let dylib_path = process_path::get_dylib_path()?;
-    let mut current_dir = dylib_path.parent();
-    
-    for _ in 0..5 {
-        if let Some(dir) = current_dir {
-            let checkpoints_dir = dir.join("checkpoints");
-            if checkpoints_dir.is_dir() {
-                let game_model = checkpoints_dir.join("GAME-1.0-large-onnx");
-                if game_model.is_dir() {
-                    return Some(game_model.to_string_lossy().to_string());
-                }
-                return Some(checkpoints_dir.to_string_lossy().to_string());
-            }
-            current_dir = dir.parent();
-        } else {
-            break;
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            let path = std::path::PathBuf::from(profile)
+                .join("copycat")
+                .join("models")
+                .join("GAME-1.0.3-large-onnx");
+            return Some(path.to_string_lossy().to_string());
         }
     }
-    
-    let mut root_dir = dylib_path.parent()?;
-    let mut current = root_dir;
-    for _ in 0..4 {
-        if let Some(name) = current.file_name() {
-            let name_str = name.to_string_lossy();
-            if name_str.ends_with(".vst3") || name_str.ends_with(".clap") {
-                if let Some(parent) = current.parent() {
-                    root_dir = parent;
-                    break;
-                }
-            }
-        }
-        if let Some(parent) = current.parent() {
-            current = parent;
-        } else {
-            break;
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = std::path::PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("copycat")
+                .join("models")
+                .join("GAME-1.0.3-large-onnx");
+            return Some(path.to_string_lossy().to_string());
         }
     }
-    
-    Some(root_dir.join("checkpoints").join("GAME-1.0-large-onnx").to_string_lossy().to_string())
+    None
 }
 
 // Note struct representing transcribed voiced notes

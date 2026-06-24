@@ -1,0 +1,9 @@
+[package]
+name = "copycat_installer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+ureq = { version = "2.9", features = ["tls"] }
+zip = { version = "0.6", default-features = false, features = ["deflate"] }

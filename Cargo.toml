@@ -2,6 +2,7 @@
 members = [
     "copycat_plugin",
     "xtask",
+    "installer",
 ]
 resolver = "2"
 
