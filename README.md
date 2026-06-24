@@ -7,59 +7,96 @@ Built with [nih-plug](https://github.com/robbert-vdh/nih-plug).
 
 ## Features
 
-- Voice-to-MIDI transcription via ONNX neural network models
-- Record audio from DAW input or load audio files (WAV, FLAC, MP3, OGG)
-- Real-time MIDI note output during DAW playback
-- Piano roll visualization with note names
-- Export MIDI to file or temp folder for drag-and-drop into DAW
-- OLE drag-and-drop on Windows
-- Adjustable BPM, segmentation, pitch estimation, and diffusion steps
-- Language hint support (English, Japanese, Cantonese, Mandarin)
-- Works on Wine (GUI via OpenGL 2.1 compatibility)
+- **AI Transcription**: Voice-to-MIDI transcription via ONNX neural network models.
+- **Audio Inputs**: Record audio from DAW input or load audio files (WAV, FLAC, MP3, OGG).
+- **Real-time Playback**: Real-time MIDI note output during DAW playback.
+- **Visual Piano Roll**: Visual interface with note names.
+- **📋 Copy to Clipboard**: Copy transcribed MIDI notes directly to the clipboard (uses standard MIDI file bytes, fully compatible with FL Studio's "Paste from MIDI clipboard" feature).
+- **Flexible Parameters**: Adjustable BPM, segmentation, pitch estimation, and diffusion steps.
+- **Language Hints**: Support for English, Japanese, Cantonese, and Mandarin.
+- **Cross-Platform & Wine Compatibility**: Works on Windows and Linux, including Wine compatibility (GUI rendering fallback to OpenGL 2.1).
 
-## Pre-built binaries
+## Installation
 
-Download from [GitHub Releases](https://github.com/openvpi/Copycat/releases).
+Download the release archive for your platform from [GitHub Releases](https://github.com/openvpi/Copycat/releases).
 
-## Build
+The package includes a one-click CLI installer (`copycat_installer`) that automates setting up the plugin and downloading the required model files.
+
+### Windows
+1. Extract the release ZIP.
+2. Run `copycat_installer.exe`.
+   - *Note: If you run it normally, it will install the plugin to your user-local directories. Run it as Administrator if you want to install it system-wide.*
+3. The installer will:
+   - Copy `copycat.clap` and `onnxruntime.dll` to your CLAP directory (e.g. `C:\Program Files\Common Files\CLAP`).
+   - Copy `copycat.vst3` directory to your VST3 directory (e.g. `C:\Program Files\Common Files\VST3`).
+   - Download the model checkpoint (`GAME-1.0.3-large-onnx`) and extract it to:  
+     `C:\Users\<YourUsername>\copycat\models\GAME-1.0.3-large-onnx`
 
 ### Linux
+1. Extract the release tarball.
+2. Open a terminal, navigate to the extracted directory, and run the installer:
+   ```bash
+   ./copycat_installer
+   ```
+3. The installer will:
+   - Copy `copycat.clap` to `~/.clap/`
+   - Copy `copycat.vst3` to `~/.vst3/`
+   - Download the model checkpoint (`GAME-1.0.3-large-onnx`) and extract it to:  
+     `~/.local/share/copycat/models/GAME-1.0.3-large-onnx`
 
+---
+
+## Building from Source
+
+### Prerequisites
+Make sure you have Rust and Cargo installed.
+
+### 1. Compile the Plugin
+
+#### Linux
 ```bash
 cargo xtask bundle copycat --release
 ```
 
-### Windows (native, recommended)
-
+#### Windows (native, recommended)
 ```powershell
 cargo xtask bundle copycat --release --target x86_64-pc-windows-msvc
 ```
 
-### Windows (cross-compile from Linux)
-
+#### Windows (cross-compile from Linux)
 ```bash
 rustup target add x86_64-pc-windows-gnu
 sudo apt install mingw-w64
 cargo xtask bundle copycat --release --target x86_64-pc-windows-gnu
 ```
 
-`onnxruntime.dll` is downloaded automatically by the build script for Windows targets.
+### 2. Compile the Installer
+Build the installer package for your target architecture:
 
-### GitHub Actions
+#### Linux
+```bash
+cargo build --package copycat_installer --release
+cp target/release/copycat_installer target/bundled/
+```
 
-Push to `main` or open a PR — CI builds both Linux and Windows
-(`.github/workflows/build.yml`).
+#### Windows (native)
+```powershell
+cargo build --package copycat_installer --release --target x86_64-pc-windows-msvc
+Copy-Item target/x86_64-pc-windows-msvc/release/copycat_installer.exe target/bundled/
+```
 
-## Output
+`target/bundled/` will now contain the complete package:
+- `copycat_installer` (or `copycat_installer.exe`)
+- `copycat.clap`
+- `copycat.vst3/`
+- `onnxruntime.dll` (Windows only)
 
-`target/bundled/` contains:
-- `copycat.clap` — CLAP plugin (recommended on Wine)
-- `copycat.vst3` — VST3 plugin
-- `onnxruntime.dll` — ONNX Runtime (Windows only)
+### GitHub Actions Build
+The project uses GitHub Actions (`.github/workflows/build.yml`) to automatically compile the plugin and installer binaries for both platforms on every tag release (e.g. pushing a tag starting with `v*`).
+
+---
 
 ## Notes
 
-- `nih-plug-patched/` is a local fork with OpenGL 2.1 fallback for Wine
-  and `catch_unwind` wrappers on all FFI entry points.
-- ONNX Runtime is loaded dynamically; place `onnxruntime.dll` next to the
-  plugin when transcribing (auto-downloaded during build).
+- `nih-plug-patched/` is a local fork with OpenGL 2.1 fallback for Wine compatibility and `catch_unwind` wrappers on all FFI entry points to prevent host crashes.
+- The VST/CLAP plugin dynamically loads ONNX Runtime; on Windows, `onnxruntime.dll` must sit in the same directory as the plugin file.
