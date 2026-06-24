@@ -539,6 +539,28 @@ impl Plugin for Copycat {
                                             }
                                         });
                                     }
+                                    if ui.add_enabled(has_notes, egui::Button::new("📋 Copy MIDI")).clicked() {
+                                         if let Some(ref notes) = *shared_state.transcribed_notes.lock() {
+                                             let tempo = params.tempo.value();
+                                             let mut buffer = Vec::new();
+                                             match write_midi_to_buffer(&mut buffer, notes, tempo) {
+                                                 Ok(_) => {
+                                                     #[cfg(target_os = "windows")]
+                                                     {
+                                                         match copy_midi_to_clipboard(&buffer) {
+                                                             Ok(_) => *shared_state.status.lock() = "MIDI notes copied to clipboard!".to_string(),
+                                                             Err(e) => *shared_state.status.lock() = format!("Clipboard error: {}", e),
+                                                         }
+                                                     }
+                                                     #[cfg(not(target_os = "windows"))]
+                                                     {
+                                                         *shared_state.status.lock() = "Clipboard copying not supported on this platform".to_string();
+                                                     }
+                                                 }
+                                                 Err(e) => *shared_state.status.lock() = format!("MIDI error: {}", e),
+                                             }
+                                         }
+                                    }
                                     let btn = ui.add_enabled(has_notes, egui::Button::new("🎵 Drag MIDI 🎵").sense(egui::Sense::drag()));
                                     if btn.drag_started() {
                                         if let Some(ref notes) = *shared_state.transcribed_notes.lock() {
@@ -873,7 +895,7 @@ fn load_audio(path: &std::path::Path) -> anyhow::Result<(Vec<f32>, u32)> {
 }
 
 // MIDI Exporter
-fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> anyhow::Result<()> {
+fn write_midi_to_buffer(buffer: &mut Vec<u8>, notes: &[NoteInfo], tempo_bpm: f32) -> anyhow::Result<()> {
     use midly::{Header, Smf, Track, TrackEvent, TrackEventKind, MidiMessage, Timing, Format};
     use midly::num::u24;
 
@@ -928,7 +950,14 @@ fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> any
         tracks: vec![track],
     };
 
-    smf.save(path)?;
+    smf.write(buffer).map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(())
+}
+
+fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> anyhow::Result<()> {
+    let mut buffer = Vec::new();
+    write_midi_to_buffer(&mut buffer, notes, tempo_bpm)?;
+    std::fs::write(path, buffer)?;
     Ok(())
 }
 
@@ -977,6 +1006,68 @@ fn drag_midi_file(path: &std::path::Path) {
             },
             Options::default(),
         );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn copy_midi_to_clipboard(midi_bytes: &[u8]) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+
+    extern "system" {
+        fn RegisterClipboardFormatA(lpString: *const u8) -> u32;
+        fn OpenClipboard(hWndNewOwner: *mut c_void) -> i32;
+        fn EmptyClipboard() -> i32;
+        fn SetClipboardData(uFormat: u32, hMem: *mut c_void) -> *mut c_void;
+        fn CloseClipboard() -> i32;
+        fn GlobalAlloc(uFlags: u32, dwBytes: usize) -> *mut c_void;
+        fn GlobalLock(hMem: *mut c_void) -> *mut c_void;
+        fn GlobalUnlock(hMem: *mut c_void) -> i32;
+        fn GlobalFree(hMem: *mut c_void) -> *mut c_void;
+    }
+
+    const GMEM_MOVEABLE: u32 = 0x0002;
+
+    unsafe {
+        let format_name = b"Standard MIDI File\0";
+        let cf_midi = RegisterClipboardFormatA(format_name.as_ptr());
+        if cf_midi == 0 {
+            return Err("Failed to register clipboard format".to_string());
+        }
+
+        if OpenClipboard(null_mut()) == 0 {
+            return Err("Failed to open clipboard".to_string());
+        }
+
+        if EmptyClipboard() == 0 {
+            let _ = CloseClipboard();
+            return Err("Failed to empty clipboard".to_string());
+        }
+
+        let h_mem = GlobalAlloc(GMEM_MOVEABLE, midi_bytes.len());
+        if h_mem.is_null() {
+            let _ = CloseClipboard();
+            return Err("Failed to allocate global memory".to_string());
+        }
+
+        let dest = GlobalLock(h_mem);
+        if dest.is_null() {
+            GlobalFree(h_mem);
+            let _ = CloseClipboard();
+            return Err("Failed to lock global memory".to_string());
+        }
+
+        std::ptr::copy_nonoverlapping(midi_bytes.as_ptr(), dest as *mut u8, midi_bytes.len());
+        GlobalUnlock(h_mem);
+
+        if SetClipboardData(cf_midi, h_mem).is_null() {
+            GlobalFree(h_mem);
+            let _ = CloseClipboard();
+            return Err("Failed to set clipboard data".to_string());
+        }
+
+        CloseClipboard();
+        Ok(())
     }
 }
 
