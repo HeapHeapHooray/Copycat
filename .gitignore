@@ -1,0 +1,14 @@
+target/
+*.log
+*.pdb
+*.bak
+
+# editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# windows
+Thumbs.db
+Desktop.ini
