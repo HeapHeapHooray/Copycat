@@ -887,21 +887,6 @@ fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> any
 #[cfg(target_os = "windows")]
 fn drag_midi_file(path: &std::path::Path) {
     // Check if running under Wine by testing if ntdll has wine_get_version
-    extern "system" {
-        fn LoadLibraryA(a: *const u8) -> *mut std::ffi::c_void;
-        fn GetProcAddress(m: *mut std::ffi::c_void, n: *const u8) -> *const ();
-        fn FreeLibrary(m: *mut std::ffi::c_void) -> i32;
-    }
-    let is_wine = unsafe {
-        let m = LoadLibraryA("ntdll.dll\0".as_ptr());
-        if m.is_null() { false }
-        else {
-            let s = GetProcAddress(m, b"wine_get_version\0".as_ptr() as *const u8);
-            FreeLibrary(m);
-            !s.is_null()
-        }
-    };
-    if is_wine { return; } // OLE drag crashes on Wine, user can drag from Explorer
     use std::ffi::c_void;
     use std::ptr::null_mut;
 
