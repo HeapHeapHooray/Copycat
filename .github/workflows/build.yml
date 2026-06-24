@@ -14,7 +14,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install deps
-        run: sudo apt-get update && sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev \
+            libxkbcommon-dev libglib2.0-dev \
+            libasound2-dev libjack-jackd2-dev
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -40,8 +45,19 @@ jobs:
         run: rustup target add x86_64-pc-windows-msvc
 
       - name: Build
-        shell: pwsh
         run: cargo xtask bundle copycat --release --target x86_64-pc-windows-msvc
+        shell: pwsh
+
+      - name: Copy onnxruntime to bundles
+        shell: pwsh
+        run: |
+          Copy-Item target/release/onnxruntime.dll target/bundled/
+          if (Test-Path target/bundled/copycat.vst3/Contents/x64-win) {
+            Copy-Item target/release/onnxruntime.dll target/bundled/copycat.vst3/Contents/x64-win/
+          }
+          if (Test-Path target/bundled/copycat.vst3/Contents/x86_64-win) {
+            Copy-Item target/release/onnxruntime.dll target/bundled/copycat.vst3/Contents/x86_64-win/
+          }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -69,10 +85,8 @@ jobs:
       - name: Package
         run: |
           cd release
-          mv linux copycat-linux
-          mv windows copycat-windows
-          tar czf copycat-linux.tar.gz copycat-linux
-          zip -r copycat-windows.zip copycat-windows
+          tar czf copycat-linux.tar.gz linux
+          zip -r copycat-windows.zip windows
 
       - name: Create release
         uses: softprops/action-gh-release@v2
