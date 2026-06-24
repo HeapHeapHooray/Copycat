@@ -3,6 +3,8 @@
 A VST3/CLAP plugin that transcribes vocal audio into MIDI notes using
 [GAME](https://github.com/openvpi/GAME).
 
+![Copycat GUI](assets/copycat_GUI.png)
+
 Built with [nih-plug](https://github.com/robbert-vdh/nih-plug).
 
 ## Features
