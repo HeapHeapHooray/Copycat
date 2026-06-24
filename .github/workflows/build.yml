@@ -13,13 +13,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Clone patched nih-plug
+        run: git clone https://github.com/HeapHeapHooray/nih-plug-patched.git nih-plug-patched
+
       - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev \
             libxkbcommon-dev libglib2.0-dev \
-            libasound2-dev libjack-jackd2-dev
+            libasound2-dev libjack-jackd2-dev git
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -37,6 +40,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Clone patched nih-plug
+        run: git clone https://github.com/HeapHeapHooray/nih-plug-patched.git nih-plug-patched
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
