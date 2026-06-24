@@ -19,6 +19,5 @@ rfd = "0.12"
 parking_lot = "0.12"
 libloading = "0.8"
 
-[dependencies]
 ort = { version = "=2.0.0-rc.9", features = ["ndarray"] }
 ort-sys = "=2.0.0-rc.9"
