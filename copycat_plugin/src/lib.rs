@@ -934,10 +934,26 @@ fn write_midi(path: &std::path::Path, notes: &[NoteInfo], tempo_bpm: f32) -> any
 
 // OLE drag-and-drop: initiate a system drag with a MIDI file
 #[cfg(target_os = "windows")]
+#[allow(non_snake_case, dead_code, unused_variables)]
 fn drag_midi_file(path: &std::path::Path) {
-    // Check if running under Wine by testing if ntdll has wine_get_version
     use std::ffi::c_void;
     use std::ptr::null_mut;
+
+    #[repr(C)]
+    struct FORMATETC {
+        cfFormat: u16,
+        ptd: *mut c_void,
+        dwAspect: u32,
+        lindex: i32,
+        tymed: u32,
+    }
+
+    #[repr(C)]
+    struct STGMEDIUM {
+        tymed: u32,
+        hGlobal: *mut c_void,
+        pUnkForRelease: *mut c_void,
+    }
 
     // COM interfaces
     #[repr(C)]
@@ -945,13 +961,13 @@ fn drag_midi_file(path: &std::path::Path) {
         query_interface: unsafe extern "system" fn(*mut c_void, *const c_void, *mut *mut c_void) -> i32,
         add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
         release: unsafe extern "system" fn(*mut c_void) -> u32,
-        get_data: unsafe extern "system" fn(*mut c_void, *const c_void, *mut c_void) -> i32,
-        get_data_here: unsafe extern "system" fn(*mut c_void, *const c_void, *mut c_void) -> i32,
-        query_get_data: unsafe extern "system" fn(*mut c_void, *const c_void) -> i32,
-        get_canonical_format_etc: unsafe extern "system" fn(*mut c_void, *const c_void, *mut c_void) -> i32,
-        set_data: unsafe extern "system" fn(*mut c_void, *const c_void, *mut c_void, i32) -> i32,
+        get_data: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut STGMEDIUM) -> i32,
+        get_data_here: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut STGMEDIUM) -> i32,
+        query_get_data: unsafe extern "system" fn(*mut c_void, *const FORMATETC) -> i32,
+        get_canonical_format_etc: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut FORMATETC) -> i32,
+        set_data: unsafe extern "system" fn(*mut c_void, *const FORMATETC, *mut STGMEDIUM, i32) -> i32,
         enum_format_etc: unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> i32,
-        dadvise: unsafe extern "system" fn(*mut c_void, *const c_void, u32, *mut c_void, *mut u32) -> i32,
+        dadvise: unsafe extern "system" fn(*mut c_void, *const FORMATETC, u32, *mut c_void, *mut u32) -> i32,
         dunadvise: unsafe extern "system" fn(*mut c_void, u32) -> i32,
         enum_dadvise: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
     }
@@ -969,7 +985,7 @@ fn drag_midi_file(path: &std::path::Path) {
         query_interface: unsafe extern "system" fn(*mut c_void, *const c_void, *mut *mut c_void) -> i32,
         add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
         release: unsafe extern "system" fn(*mut c_void) -> u32,
-        query_continue_drag: unsafe extern "system" fn(*mut c_void, i32, u32, *mut u32) -> i32,
+        query_continue_drag: unsafe extern "system" fn(*mut c_void, i32, u32) -> i32,
         give_feedback: unsafe extern "system" fn(*mut c_void, u32) -> i32,
     }
     #[repr(C)]
@@ -981,7 +997,7 @@ fn drag_midi_file(path: &std::path::Path) {
         query_interface: unsafe extern "system" fn(*mut c_void, *const c_void, *mut *mut c_void) -> i32,
         add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
         release: unsafe extern "system" fn(*mut c_void) -> u32,
-        next_fn: unsafe extern "system" fn(*mut c_void, u32, *mut c_void, *mut u32) -> i32,
+        next_fn: unsafe extern "system" fn(*mut c_void, u32, *mut FORMATETC, *mut u32) -> i32,
         skip: unsafe extern "system" fn(*mut c_void, u32) -> i32,
         reset: unsafe extern "system" fn(*mut c_void) -> i32,
         clone_fn: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
@@ -1003,8 +1019,6 @@ fn drag_midi_file(path: &std::path::Path) {
     const DV_E_FORMATETC: i32 = -2147221404i32; // 0x80040064
     const MK_LBUTTON: i32 = 1;
     const DROPEFFECT_COPY: u32 = 1;
-    const FORMATETC: [u32; 2] = [CF_HDROP, 0]; // cf, ptd, dwAspect, lindex, tymed
-    // Actually FORMATETC is larger, let me use bytes
 
     extern "system" {
         fn DoDragDrop(
@@ -1014,6 +1028,7 @@ fn drag_midi_file(path: &std::path::Path) {
             pdwEffect: *mut u32,
         ) -> i32;
         fn OleInitialize(pvReserved: *mut c_void) -> i32;
+        fn OleUninitialize();
         fn GlobalAlloc(uFlags: u32, dwBytes: usize) -> *mut c_void;
         fn GlobalLock(hMem: *mut c_void) -> *mut c_void;
         fn GlobalUnlock(hMem: *mut c_void) -> i32;
@@ -1021,130 +1036,152 @@ fn drag_midi_file(path: &std::path::Path) {
     }
 
     unsafe {
-        OleInitialize(null_mut());
+        let hr = OleInitialize(null_mut());
+        let initialized = hr >= 0;
 
         let mut wide: Vec<u16> = path.to_string_lossy()
-            .encode_utf16().chain(std::iter::once(0)).collect();
+            .encode_utf16()
+            .chain([0, 0])
+            .collect();
         wide.shrink_to_fit();
         let path_wide = wide.as_mut_ptr();
         let path_len = wide.len();
         let path_cap = wide.capacity();
         std::mem::forget(wide); // Defer deallocation until COM release
 
-    // IUnknown for IDataObject
-    unsafe extern "system" fn do_query_interface(_this: *mut c_void, _riid: *const c_void, ppv: *mut *mut c_void) -> i32 {
-        *ppv = _this;
-        let obj = _this as *mut DataObj;
-        let add_ref = (*(*obj).vtbl).add_ref;
-        add_ref(_this);
-        S_OK
-    }
-    unsafe extern "system" fn do_add_ref(this: *mut c_void) -> u32 {
-        let obj = this as *mut DataObj;
-        (*obj).refcount += 1;
-        (*obj).refcount
-    }
-    unsafe extern "system" fn do_release(this: *mut c_void) -> u32 {
-        let obj = this as *mut DataObj;
-        (*obj).refcount -= 1;
-        if (*obj).refcount == 0 {
-            let _ = Vec::from_raw_parts((*obj).path_wide, (*obj).path_len, (*obj).path_cap);
-            let _ = Box::from_raw(this as *mut DataObj);
-            0
-        } else {
+        // IUnknown for IDataObject
+        unsafe extern "system" fn do_query_interface(_this: *mut c_void, _riid: *const c_void, ppv: *mut *mut c_void) -> i32 {
+            *ppv = _this;
+            let obj = _this as *mut DataObj;
+            let add_ref = (*(*obj).vtbl).add_ref;
+            add_ref(_this);
+            S_OK
+        }
+        unsafe extern "system" fn do_add_ref(this: *mut c_void) -> u32 {
+            let obj = this as *mut DataObj;
+            (*obj).refcount += 1;
             (*obj).refcount
         }
-    }
-    unsafe extern "system" fn do_get_data(
-        this: *mut c_void, pformatetc: *const c_void, pmedium: *mut c_void,
-    ) -> i32 {
-        let fmt = *(pformatetc as *const u16);
-        if fmt != CF_HDROP as u16 { return S_FALSE; }
+        unsafe extern "system" fn do_release(this: *mut c_void) -> u32 {
+            let obj = this as *mut DataObj;
+            (*obj).refcount -= 1;
+            if (*obj).refcount == 0 {
+                let _vtbl = Box::from_raw((*obj).vtbl as *mut IDataObjectVtbl);
+                let _ = Vec::from_raw_parts((*obj).path_wide, (*obj).path_len, (*obj).path_cap);
+                let _ = Box::from_raw(this as *mut DataObj);
+                0
+            } else {
+                (*obj).refcount
+            }
+        }
+        unsafe extern "system" fn do_get_data(
+            this: *mut c_void, pformatetc: *const FORMATETC, pmedium: *mut STGMEDIUM,
+        ) -> i32 {
+            if pformatetc.is_null() || pmedium.is_null() { return E_UNEXPECTED; }
+            let format = &*pformatetc;
+            if format.cfFormat != CF_HDROP as u16 { return DV_E_FORMATETC; }
+            if (format.tymed & TYMED_HGLOBAL) == 0 { return DV_E_FORMATETC; }
 
-        let obj = this as *mut DataObj;
-        let wide_len = (*obj).path_len - 1;
+            let obj = this as *mut DataObj;
+            let total_chars = (*obj).path_len;
 
-        #[repr(C)]
-        struct DROPFILES { pFiles: u32, pt: (i32,i32), fNC: i32, fWide: i32 }
-        let drop_size = std::mem::size_of::<DROPFILES>();
-        let total = drop_size + (wide_len as usize + 1) * 2;
+            #[repr(C)]
+            struct DROPFILES { pFiles: u32, pt: (i32,i32), fNC: i32, fWide: i32 }
+            let drop_size = std::mem::size_of::<DROPFILES>();
+            let total = drop_size + total_chars * 2;
 
-        let h = GlobalAlloc(GHND, total);
-        if h.is_null() { return E_UNEXPECTED; }
-        let ptr = GlobalLock(h) as *mut u8;
-        if ptr.is_null() { GlobalFree(h); return E_UNEXPECTED; }
+            let h = GlobalAlloc(GHND, total);
+            if h.is_null() { return E_UNEXPECTED; }
+            let ptr = GlobalLock(h) as *mut u8;
+            if ptr.is_null() { GlobalFree(h); return E_UNEXPECTED; }
 
-        (ptr as *mut DROPFILES).write(DROPFILES {
-            pFiles: drop_size as u32, pt: (0,0), fNC: 0, fWide: 1,
-        });
-        std::ptr::copy_nonoverlapping((*obj).path_wide, ptr.add(drop_size) as *mut u16, wide_len + 1);
-        GlobalUnlock(h);
+            (ptr as *mut DROPFILES).write(DROPFILES {
+                pFiles: drop_size as u32, pt: (0,0), fNC: 0, fWide: 1,
+            });
+            std::ptr::copy_nonoverlapping((*obj).path_wide, ptr.add(drop_size) as *mut u16, total_chars);
+            GlobalUnlock(h);
 
-        // STGMEDIUM: tymed(u32), pad, hGlobal(ptr), pUnkForRelease(ptr)
-        *(pmedium as *mut u32) = TYMED_HGLOBAL;
-        *(pmedium.add(8) as *mut *mut c_void) = h as *mut c_void;
-        S_OK
-    }
-    // Stub implementations for other IDataObject methods
-    unsafe extern "system" fn do_get_data_here(_: *mut c_void, _: *const c_void, _: *mut c_void) -> i32 { S_FALSE }
-    unsafe extern "system" fn do_query_get_data(
-        _this: *mut c_void, pformatetc: *const c_void,
-    ) -> i32 {
-        let fmt = *(pformatetc as *const u16);
-        if fmt == CF_HDROP as u16 { S_OK } else { DV_E_FORMATETC }
-    }
-    unsafe extern "system" fn do_get_canonical(_: *mut c_void, _: *const c_void, _: *mut c_void) -> i32 { E_NOTIMPL }
-    unsafe extern "system" fn do_set_data(_: *mut c_void, _: *const c_void, _: *mut c_void, _: i32) -> i32 { S_FALSE }
-    unsafe extern "system" fn do_enum_fmt(this: *mut c_void, _direction: u32, ppenum: *mut *mut c_void) -> i32 {
-        // IEnumFORMATETC vtbl that provides our CF_HDROP format
-        unsafe extern "system" fn ef_query_interface(_t: *mut c_void, _r: *const c_void, ppv: *mut *mut c_void) -> i32 {
-            *ppv = _t;
-            let e = _t as *mut EnumFmt;
-            let ar = (*(*e).vtbl).add_ref;
-            ar(_t);
+            let med = &mut *pmedium;
+            med.tymed = TYMED_HGLOBAL;
+            med.hGlobal = h;
+            med.pUnkForRelease = std::ptr::null_mut();
             S_OK
         }
-        unsafe extern "system" fn ef_add_ref(t: *mut c_void) -> u32 { let o = t as *mut EnumFmt; (*o).refcount += 1; (*o).refcount }
-        unsafe extern "system" fn ef_release(t: *mut c_void) -> u32 {
-            let o = t as *mut EnumFmt; (*o).refcount -= 1;
-            if (*o).refcount == 0 { let _ = Box::from_raw(t as *mut EnumFmt); 0 } else { (*o).refcount }
+        // Stub implementations for other IDataObject methods
+        unsafe extern "system" fn do_get_data_here(_: *mut c_void, _: *const FORMATETC, _: *mut STGMEDIUM) -> i32 { S_FALSE }
+        unsafe extern "system" fn do_query_get_data(
+            _this: *mut c_void, pformatetc: *const FORMATETC,
+        ) -> i32 {
+            if pformatetc.is_null() { return E_UNEXPECTED; }
+            let format = &*pformatetc;
+            if format.cfFormat == CF_HDROP as u16 {
+                if format.tymed == 0 || (format.tymed & TYMED_HGLOBAL) != 0 {
+                    S_OK
+                } else {
+                    DV_E_FORMATETC
+                }
+            } else {
+                DV_E_FORMATETC
+            }
         }
-        unsafe extern "system" fn ef_next(t: *mut c_void, celt: u32, rgelt: *mut c_void, pceltFetched: *mut u32) -> i32 {
-            let o = t as *mut EnumFmt;
-            if (*o).pos >= (*o).count || celt == 0 { if !pceltFetched.is_null() { *pceltFetched = 0; } return S_FALSE; }
-            // FORMATETC layout: cfFormat(u16)+pad(u16)=u32, ptd(u64), dwAspect(u32), lindex(i32), tymed(u32) = 24 bytes
-            let fe = rgelt as *mut u32;
-            *fe = CF_HDROP;  // cfFormat = 15, ptd = 0 (upper bits zero from alloc)
-            *(fe.add(1)) = 0; // ptd = null
-            *(fe.add(2)) = 0; // ptd upper 32 bits
-            *(fe.add(3)) = DVASPECT_CONTENT; // dwAspect
-            *(fe.add(4)) = -1i32 as u32; // lindex = -1
-            *(fe.add(5)) = TYMED_HGLOBAL; // tymed
-            (*o).pos += 1;
-            if !pceltFetched.is_null() { *pceltFetched = 1; }
-            S_OK
-        }
-        unsafe extern "system" fn ef_skip(t: *mut c_void, celt: u32) -> i32 {
-            let o = t as *mut EnumFmt;
-            if (*o).pos + celt <= (*o).count { (*o).pos += celt; S_OK } else { S_FALSE }
-        }
-        unsafe extern "system" fn ef_reset(t: *mut c_void) -> i32 { (*(t as *mut EnumFmt)).pos = 0; S_OK }
-        unsafe extern "system" fn ef_clone(t: *mut c_void, ppenum: *mut *mut c_void) -> i32 {
-            let src = t as *mut EnumFmt;
-            let c = Box::into_raw(Box::new(EnumFmt { vtbl: (*src).vtbl, refcount: 1, pos: (*src).pos, count: (*src).count }));
-            *ppenum = c as *mut c_void;
-            S_OK
-        }
+        unsafe extern "system" fn do_get_canonical(_: *mut c_void, _: *const FORMATETC, _: *mut FORMATETC) -> i32 { E_NOTIMPL }
+        unsafe extern "system" fn do_set_data(_: *mut c_void, _: *const FORMATETC, _: *mut STGMEDIUM, _: i32) -> i32 { S_FALSE }
+        unsafe extern "system" fn do_enum_fmt(this: *mut c_void, _direction: u32, ppenum: *mut *mut c_void) -> i32 {
+            // IEnumFORMATETC vtbl that provides our CF_HDROP format
+            unsafe extern "system" fn ef_query_interface(_t: *mut c_void, _r: *const c_void, ppv: *mut *mut c_void) -> i32 {
+                *ppv = _t;
+                let e = _t as *mut EnumFmt;
+                let ar = (*(*e).vtbl).add_ref;
+                ar(_t);
+                S_OK
+            }
+            unsafe extern "system" fn ef_add_ref(t: *mut c_void) -> u32 { let o = t as *mut EnumFmt; (*o).refcount += 1; (*o).refcount }
+            unsafe extern "system" fn ef_release(t: *mut c_void) -> u32 {
+                let o = t as *mut EnumFmt; (*o).refcount -= 1;
+                if (*o).refcount == 0 {
+                    let _vtbl = Box::from_raw((*o).vtbl as *mut IEnumFmtVtbl);
+                    let _ = Box::from_raw(t as *mut EnumFmt);
+                    0
+                } else {
+                    (*o).refcount
+                }
+            }
+            unsafe extern "system" fn ef_next(t: *mut c_void, celt: u32, rgelt: *mut FORMATETC, pceltFetched: *mut u32) -> i32 {
+                let o = t as *mut EnumFmt;
+                if (*o).pos >= (*o).count || celt == 0 { if !pceltFetched.is_null() { *pceltFetched = 0; } return S_FALSE; }
+                
+                let fe = rgelt;
+                (*fe).cfFormat = CF_HDROP as u16;
+                (*fe).ptd = std::ptr::null_mut();
+                (*fe).dwAspect = DVASPECT_CONTENT;
+                (*fe).lindex = -1;
+                (*fe).tymed = TYMED_HGLOBAL;
+                
+                (*o).pos += 1;
+                if !pceltFetched.is_null() { *pceltFetched = 1; }
+                S_OK
+            }
+            unsafe extern "system" fn ef_skip(t: *mut c_void, celt: u32) -> i32 {
+                let o = t as *mut EnumFmt;
+                if (*o).pos + celt <= (*o).count { (*o).pos += celt; S_OK } else { S_FALSE }
+            }
+            unsafe extern "system" fn ef_reset(t: *mut c_void) -> i32 { (*(t as *mut EnumFmt)).pos = 0; S_OK }
+            unsafe extern "system" fn ef_clone(t: *mut c_void, ppenum: *mut *mut c_void) -> i32 {
+                let src = t as *mut EnumFmt;
+                let c = Box::into_raw(Box::new(EnumFmt { vtbl: (*src).vtbl, refcount: 1, pos: (*src).pos, count: (*src).count }));
+                *ppenum = c as *mut c_void;
+                S_OK
+            }
 
-        let vtbl = Box::into_raw(Box::new(IEnumFmtVtbl {
-            query_interface: ef_query_interface, add_ref: ef_add_ref, release: ef_release,
-            next_fn: ef_next, skip: ef_skip, reset: ef_reset, clone_fn: ef_clone,
-        }));
-        let enum_fmt = Box::into_raw(Box::new(EnumFmt { vtbl: vtbl as *const IEnumFmtVtbl, refcount: 1, pos: 0, count: 1 }));
-        *ppenum = enum_fmt as *mut c_void;
-        S_OK
-    }
-    unsafe extern "system" fn do_dadvise(_: *mut c_void, _: *const c_void, _: u32, _: *mut c_void, _: *mut u32) -> i32 { S_FALSE }
+            let vtbl = Box::into_raw(Box::new(IEnumFmtVtbl {
+                query_interface: ef_query_interface, add_ref: ef_add_ref, release: ef_release,
+                next_fn: ef_next, skip: ef_skip, reset: ef_reset, clone_fn: ef_clone,
+            }));
+            let enum_fmt = Box::into_raw(Box::new(EnumFmt { vtbl: vtbl as *const IEnumFmtVtbl, refcount: 1, pos: 0, count: 1 }));
+            *ppenum = enum_fmt as *mut c_void;
+            S_OK
+        }
+        unsafe extern "system" fn do_dadvise(_: *mut c_void, _: *const FORMATETC, _: u32, _: *mut c_void, _: *mut u32) -> i32 { S_FALSE }
         unsafe extern "system" fn do_dunadvise(_: *mut c_void, _: u32) -> i32 { S_FALSE }
         unsafe extern "system" fn do_enum_dadvise(_: *mut c_void, _: *mut *mut c_void) -> i32 { S_FALSE }
 
@@ -1180,14 +1217,20 @@ fn drag_midi_file(path: &std::path::Path) {
         unsafe extern "system" fn ds_release(this: *mut c_void) -> u32 {
             let obj = this as *mut DropSrc;
             (*obj).refcount -= 1;
-            if (*obj).refcount == 0 { let _ = Box::from_raw(this as *mut DropSrc); }
-            (*obj).refcount
+            let refc = (*obj).refcount;
+            if refc == 0 {
+                let _vtbl = Box::from_raw((*obj).vtbl as *mut IDropSourceVtbl);
+                let _ = Box::from_raw(this as *mut DropSrc);
+            }
+            refc
         }
         unsafe extern "system" fn ds_continue_drag(
-            _: *mut c_void, fEscapePressed: i32, _: u32, pdwEffect: *mut u32,
+            _this: *mut c_void, fEscapePressed: i32, grfKeyState: u32,
         ) -> i32 {
-            if fEscapePressed != 0 { *pdwEffect = 0; return DRAGDROP_S_CANCEL as i32; }
-            *pdwEffect = DROPEFFECT_COPY;
+            if fEscapePressed != 0 { return DRAGDROP_S_CANCEL as i32; }
+            if (grfKeyState & MK_LBUTTON as u32) == 0 {
+                return DRAGDROP_S_DROP as i32;
+            }
             S_OK
         }
         unsafe extern "system" fn ds_give_feedback(_: *mut c_void, _: u32) -> i32 {
@@ -1211,6 +1254,10 @@ fn drag_midi_file(path: &std::path::Path) {
         // Cleanup
         do_release(data_obj as *mut c_void);
         ds_release(drop_src as *mut c_void);
+
+        if initialized {
+            OleUninitialize();
+        }
     }
 }
 
@@ -1228,9 +1275,9 @@ fn run_transcription(
     t0: f32,
 ) -> Result<Vec<NoteInfo>, String> {
     let model_dir = std::path::PathBuf::from(&model_dir_str);
-    #[cfg(feature = "load-dynamic")]
+    #[cfg(all(target_os = "windows", target_env = "gnu"))]
     let _ = ort::init_from("onnxruntime.dll").commit();
-    #[cfg(not(feature = "load-dynamic"))]
+    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     let _ = ort::init().commit();
     let config_path = model_dir.join("config.json");
     if !config_path.exists() {
