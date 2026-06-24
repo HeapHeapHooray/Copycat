@@ -964,12 +964,12 @@ fn drag_midi_file(path: &std::path::Path) {
     }
 
     if !hwnd.is_null() {
-        let window = DummyWindow { hwnd };
+        let window = Box::leak(Box::new(DummyWindow { hwnd }));
         let item = DragItem::Files(vec![path.to_path_buf()]);
         let preview = Image::Raw(Vec::new());
 
         let _ = drag::start_drag(
-            &window,
+            window,
             item,
             preview,
             |_result, _cursor_pos| {
