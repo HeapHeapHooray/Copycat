@@ -539,7 +539,7 @@ impl Plugin for Copycat {
                                             }
                                         });
                                     }
-                                    let btn = ui.add_enabled(has_notes, egui::Button::new("🎵 Drag MIDI 🎵"));
+                                    let btn = ui.add_enabled(has_notes, egui::Button::new("🎵 Drag MIDI 🎵").sense(egui::Sense::drag()));
                                     if btn.drag_started() {
                                         if let Some(ref notes) = *shared_state.transcribed_notes.lock() {
                                             let tempo = params.tempo.value();
