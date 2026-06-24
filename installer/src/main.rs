@@ -7,15 +7,116 @@ use eframe::egui;
 
 const CHECKPOINT_URL: &str = "https://github.com/openvpi/GAME/releases/download/v1.0.3/GAME-1.0.3-large-onnx.zip";
 
+// Robust filesystem helpers that retry on "Overlapped I/O pending" (997) or "Sharing violation" (32)
+fn robust_create_dir_all(path: &Path) -> std::io::Result<()> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match fs::create_dir_all(path) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if code == Some(997) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+fn robust_copy(from: &Path, to: &Path) -> std::io::Result<u64> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match fs::copy(from, to) {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if code == Some(997) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+fn robust_file_create(path: &Path) -> std::io::Result<fs::File> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match fs::File::create(path) {
+            Ok(file) => return Ok(file),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if code == Some(997) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+fn robust_remove_dir_all(path: &Path) -> std::io::Result<()> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match fs::remove_dir_all(path) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
+fn robust_remove_file(path: &Path) -> std::io::Result<()> {
+    let mut retries = 5;
+    let mut delay = std::time::Duration::from_millis(50);
+    loop {
+        match fs::remove_file(path) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(997) || code == Some(32)) && retries > 0 {
+                    retries -= 1;
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
-    fs::create_dir_all(&dst)?;
+    robust_create_dir_all(dst.as_ref())?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let ty = entry.file_type()?;
         if ty.is_dir() {
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
         } else {
-            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+            robust_copy(&entry.path(), &dst.as_ref().join(entry.file_name()))?;
         }
     }
     Ok(())
@@ -53,28 +154,54 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
             let mut errors = Vec::new();
 
             let target_sys = sys_clap_dir.join("copycat.clap");
-            if fs::create_dir_all(&sys_clap_dir).is_ok() && fs::copy(&clap_src, &target_sys).is_ok() {
-                if dll_src.exists() {
-                    let _ = fs::copy(&dll_src, sys_clap_dir.join("onnxruntime.dll"));
+            
+            // Try system CLAP
+            match robust_create_dir_all(&sys_clap_dir) {
+                Ok(_) => {
+                    match robust_copy(&clap_src, &target_sys) {
+                        Ok(_) => {
+                            if dll_src.exists() {
+                                if let Err(e) = robust_copy(&dll_src, &sys_clap_dir.join("onnxruntime.dll")) {
+                                    errors.push(format!("Failed to copy onnxruntime.dll to system CLAP: {}", e));
+                                }
+                            }
+                            *status.lock() = "CLAP installed to system CLAP directory.".to_string();
+                            success = true;
+                        }
+                        Err(e) => {
+                            errors.push(format!("System CLAP copy failed: {}. Make sure your DAW is closed.", e));
+                        }
+                    }
                 }
-                *status.lock() = format!("CLAP installed to system CLAP directory.");
-                success = true;
-            } else {
-                errors.push("System directory write failed (Admin permissions may be needed)");
+                Err(e) => {
+                    errors.push(format!("System CLAP dir creation failed: {}", e));
+                }
             }
 
             // Try user local path if system path failed
             if !success {
                 if let Some(ref ucd) = user_clap_dir {
                     let target_user = ucd.join("copycat.clap");
-                    if fs::create_dir_all(ucd).is_ok() && fs::copy(&clap_src, &target_user).is_ok() {
-                        if dll_src.exists() {
-                            let _ = fs::copy(&dll_src, ucd.join("onnxruntime.dll"));
+                    match robust_create_dir_all(ucd) {
+                        Ok(_) => {
+                            match robust_copy(&clap_src, &target_user) {
+                                Ok(_) => {
+                                    if dll_src.exists() {
+                                        if let Err(e) = robust_copy(&dll_src, &ucd.join("onnxruntime.dll")) {
+                                            errors.push(format!("Failed to copy onnxruntime.dll to user CLAP: {}", e));
+                                        }
+                                    }
+                                    *status.lock() = "CLAP installed to user CLAP directory.".to_string();
+                                    success = true;
+                                }
+                                Err(e) => {
+                                    errors.push(format!("User CLAP copy failed: {}", e));
+                                }
+                            }
                         }
-                        *status.lock() = format!("CLAP installed to user CLAP directory.");
-                        success = true;
-                    } else {
-                        errors.push("User directory write failed");
+                        Err(e) => {
+                            errors.push(format!("User CLAP dir creation failed: {}", e));
+                        }
                     }
                 }
             }
@@ -96,23 +223,30 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
             let mut errors = Vec::new();
 
             let target_sys = sys_vst3_dir.join("copycat.vst3");
-            let _ = fs::remove_dir_all(&target_sys); // clean old
-            if copy_dir_all(&vst3_src, &target_sys).is_ok() {
-                *status.lock() = format!("VST3 installed to system VST3 directory.");
-                success = true;
-            } else {
-                errors.push("System directory write failed (Admin permissions may be needed)");
+            let _ = robust_remove_dir_all(&target_sys); // clean old
+            
+            match copy_dir_all(&vst3_src, &target_sys) {
+                Ok(_) => {
+                    *status.lock() = "VST3 installed to system VST3 directory.".to_string();
+                    success = true;
+                }
+                Err(e) => {
+                    errors.push(format!("System VST3 copy failed: {}. Make sure your DAW is closed.", e));
+                }
             }
 
             if !success {
                 if let Some(ref uvd) = user_vst3_dir {
                     let target_user = uvd.join("copycat.vst3");
-                    let _ = fs::remove_dir_all(&target_user); // clean old
-                    if copy_dir_all(&vst3_src, &target_user).is_ok() {
-                        *status.lock() = format!("VST3 installed to user VST3 directory.");
-                        success = true;
-                    } else {
-                        errors.push("User directory write failed");
+                    let _ = robust_remove_dir_all(&target_user); // clean old
+                    match copy_dir_all(&vst3_src, &target_user) {
+                        Ok(_) => {
+                            *status.lock() = "VST3 installed to user VST3 directory.".to_string();
+                            success = true;
+                        }
+                        Err(e) => {
+                            errors.push(format!("User VST3 copy failed: {}", e));
+                        }
                     }
                 }
             }
@@ -135,8 +269,8 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
             let clap_dir = home_path.join(".clap");
             let target = clap_dir.join("copycat.clap");
             *status.lock() = "Installing CLAP to ~/.clap/".to_string();
-            fs::create_dir_all(&clap_dir)?;
-            fs::copy(&clap_src, &target)?;
+            robust_create_dir_all(&clap_dir)?;
+            robust_copy(&clap_src, &target)?;
             clap_installed = true;
         }
 
@@ -145,7 +279,7 @@ fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::
             let vst3_dir = home_path.join(".vst3");
             let target = vst3_dir.join("copycat.vst3");
             *status.lock() = "Installing VST3 to ~/.vst3/".to_string();
-            let _ = fs::remove_dir_all(&target);
+            let _ = robust_remove_dir_all(&target);
             copy_dir_all(&vst3_src, &target)?;
             vst3_installed = true;
         }
@@ -165,7 +299,7 @@ fn download_and_extract_model(
     extract_progress: &Arc<Mutex<f32>>,
 ) -> anyhow::Result<()> {
     let models_base_dir = Path::new(model_install_path);
-    fs::create_dir_all(models_base_dir)?;
+    robust_create_dir_all(models_base_dir)?;
     let zip_path = models_base_dir.join("download.zip");
 
     *status.lock() = "Connecting to download server...".to_string();
@@ -175,7 +309,7 @@ fn download_and_extract_model(
         .header("Content-Length")
         .and_then(|len| len.parse::<usize>().ok());
 
-    let mut file = fs::File::create(&zip_path)?;
+    let mut file = robust_file_create(&zip_path)?;
     let mut reader = response.into_reader();
     let mut buffer = [0; 65536];
     let mut downloaded = 0;
@@ -217,7 +351,7 @@ fn download_and_extract_model(
         models_base_dir.join("GAME-1.0.3-large-onnx")
     };
 
-    fs::create_dir_all(&extract_dest)?;
+    robust_create_dir_all(&extract_dest)?;
     let archive_len = archive.len();
 
     for i in 0..archive_len {
@@ -228,14 +362,14 @@ fn download_and_extract_model(
         };
 
         if file.name().ends_with('/') {
-            fs::create_dir_all(&outpath)?;
+            robust_create_dir_all(&outpath)?;
         } else {
             if let Some(p) = outpath.parent() {
                 if !p.exists() {
-                    fs::create_dir_all(p)?;
+                    robust_create_dir_all(p)?;
                 }
             }
-            let mut outfile = fs::File::create(&outpath)?;
+            let mut outfile = robust_file_create(&outpath)?;
             io::copy(&mut file, &mut outfile)?;
         }
 
@@ -253,7 +387,7 @@ fn download_and_extract_model(
     *extract_progress.lock() = 1.0;
 
     *status.lock() = "Cleaning up installer files...".to_string();
-    let _ = fs::remove_file(&zip_path);
+    let _ = robust_remove_file(&zip_path);
     Ok(())
 }
 
