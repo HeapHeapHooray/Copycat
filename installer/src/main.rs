@@ -1,6 +1,9 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use parking_lot::Mutex;
+use eframe::egui;
 
 const CHECKPOINT_URL: &str = "https://github.com/openvpi/GAME/releases/download/v1.0.3/GAME-1.0.3-large-onnx.zip";
 
@@ -18,7 +21,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> 
     Ok(())
 }
 
-fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
+fn install_plugin_files(src_dir: &Path, status: &Arc<Mutex<String>>) -> anyhow::Result<()> {
     let clap_src = src_dir.join("copycat.clap");
     let vst3_src = src_dir.join("copycat.vst3");
     #[cfg(target_os = "windows")]
@@ -45,8 +48,7 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
             let sys_clap_dir = PathBuf::from(&common_files).join("CLAP");
             let user_clap_dir = local_app_data.as_ref().map(|lad| PathBuf::from(lad).join("Programs").join("Common").join("CLAP"));
 
-            println!("Installing CLAP plugin...");
-            // Try system path first
+            *status.lock() = "Installing CLAP plugin...".to_string();
             let mut success = false;
             let mut errors = Vec::new();
 
@@ -55,7 +57,7 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
                 if dll_src.exists() {
                     let _ = fs::copy(&dll_src, sys_clap_dir.join("onnxruntime.dll"));
                 }
-                println!("Successfully installed CLAP to system directory: {:?}", target_sys);
+                *status.lock() = format!("CLAP installed to system CLAP directory.");
                 success = true;
             } else {
                 errors.push("System directory write failed (Admin permissions may be needed)");
@@ -69,7 +71,7 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
                         if dll_src.exists() {
                             let _ = fs::copy(&dll_src, ucd.join("onnxruntime.dll"));
                         }
-                        println!("Successfully installed CLAP to user directory: {:?}", target_user);
+                        *status.lock() = format!("CLAP installed to user CLAP directory.");
                         success = true;
                     } else {
                         errors.push("User directory write failed");
@@ -80,11 +82,8 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
             if success {
                 clap_installed = true;
             } else {
-                println!("Warning: Failed to install CLAP. Errors: {:?}", errors);
-                println!("Please run the installer as Administrator or manually copy 'copycat.clap' and 'onnxruntime.dll' to your CLAP folder.");
+                anyhow::bail!("Failed to install CLAP. Try running the installer as Administrator.\nErrors: {:?}", errors);
             }
-        } else {
-            println!("CLAP plugin source (copycat.clap) not found in the installer directory. Skipping CLAP.");
         }
 
         // 2. VST3 Installation
@@ -92,14 +91,14 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
             let sys_vst3_dir = PathBuf::from(&common_files).join("VST3");
             let user_vst3_dir = local_app_data.as_ref().map(|lad| PathBuf::from(lad).join("Programs").join("Common").join("VST3"));
 
-            println!("Installing VST3 plugin...");
+            *status.lock() = "Installing VST3 plugin...".to_string();
             let mut success = false;
             let mut errors = Vec::new();
 
             let target_sys = sys_vst3_dir.join("copycat.vst3");
             let _ = fs::remove_dir_all(&target_sys); // clean old
             if copy_dir_all(&vst3_src, &target_sys).is_ok() {
-                println!("Successfully installed VST3 to system directory: {:?}", target_sys);
+                *status.lock() = format!("VST3 installed to system VST3 directory.");
                 success = true;
             } else {
                 errors.push("System directory write failed (Admin permissions may be needed)");
@@ -110,7 +109,7 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
                     let target_user = uvd.join("copycat.vst3");
                     let _ = fs::remove_dir_all(&target_user); // clean old
                     if copy_dir_all(&vst3_src, &target_user).is_ok() {
-                        println!("Successfully installed VST3 to user directory: {:?}", target_user);
+                        *status.lock() = format!("VST3 installed to user VST3 directory.");
                         success = true;
                     } else {
                         errors.push("User directory write failed");
@@ -121,11 +120,8 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
             if success {
                 vst3_installed = true;
             } else {
-                println!("Warning: Failed to install VST3. Errors: {:?}", errors);
-                println!("Please run the installer as Administrator or manually copy 'copycat.vst3' to your VST3 folder.");
+                anyhow::bail!("Failed to install VST3. Try running the installer as Administrator.\nErrors: {:?}", errors);
             }
-        } else {
-            println!("VST3 plugin source (copycat.vst3) not found in the installer directory. Skipping VST3.");
         }
     }
 
@@ -138,82 +134,51 @@ fn install_plugin_files(src_dir: &Path) -> anyhow::Result<()> {
         if clap_src.exists() {
             let clap_dir = home_path.join(".clap");
             let target = clap_dir.join("copycat.clap");
-            println!("Installing CLAP to {:?}", target);
+            *status.lock() = "Installing CLAP to ~/.clap/".to_string();
             fs::create_dir_all(&clap_dir)?;
             fs::copy(&clap_src, &target)?;
-            println!("Successfully installed CLAP.");
             clap_installed = true;
-        } else {
-            println!("CLAP plugin source (copycat.clap) not found in the installer directory. Skipping CLAP.");
         }
 
         // 2. VST3 Installation
         if vst3_src.exists() && vst3_src.is_dir() {
             let vst3_dir = home_path.join(".vst3");
             let target = vst3_dir.join("copycat.vst3");
-            println!("Installing VST3 to {:?}", target);
+            *status.lock() = "Installing VST3 to ~/.vst3/".to_string();
             let _ = fs::remove_dir_all(&target);
             copy_dir_all(&vst3_src, &target)?;
-            println!("Successfully installed VST3.");
             vst3_installed = true;
-        } else {
-            println!("VST3 plugin source (copycat.vst3) not found in the installer directory. Skipping VST3.");
         }
     }
 
     if !clap_installed && !vst3_installed {
-        println!("Neither copycat.clap nor copycat.vst3 was successfully installed.");
+        anyhow::bail!("No plugin binaries (copycat.clap / copycat.vst3) found to install.");
     }
 
     Ok(())
 }
 
-fn download_and_extract_model() -> anyhow::Result<()> {
-    // Determine the target model path
-    let models_base_dir = {
-        #[cfg(target_os = "windows")]
-        {
-            if let Ok(profile) = std::env::var("USERPROFILE") {
-                PathBuf::from(profile).join("copycat").join("models")
-            } else {
-                anyhow::bail!("USERPROFILE environment variable not found. Cannot determine model directory.");
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            if let Ok(home) = std::env::var("HOME") {
-                PathBuf::from(home).join(".local").join("share").join("copycat").join("models")
-            } else {
-                anyhow::bail!("HOME environment variable not found. Cannot determine model directory.");
-            }
-        }
-    };
+fn download_and_extract_model(
+    model_install_path: &str,
+    status: &Arc<Mutex<String>>,
+    download_progress: &Arc<Mutex<f32>>,
+    extract_progress: &Arc<Mutex<f32>>,
+) -> anyhow::Result<()> {
+    let models_base_dir = Path::new(model_install_path);
+    fs::create_dir_all(models_base_dir)?;
+    let zip_path = models_base_dir.join("download.zip");
 
-    fs::create_dir_all(&models_base_dir)?;
-    let zip_path = models_base_dir.join("GAME-1.0.3-large-onnx.zip");
-
-    println!("Target model directory: {:?}", models_base_dir.join("GAME-1.0.3-large-onnx"));
-
-    // Download the zip file
-    println!("Connecting to GitHub to download model checkpoint...");
+    *status.lock() = "Connecting to download server...".to_string();
     let response = ureq::get(CHECKPOINT_URL).call()?;
     
     let total_size = response
         .header("Content-Length")
         .and_then(|len| len.parse::<usize>().ok());
 
-    println!("Downloading from: {}", CHECKPOINT_URL);
-    if let Some(size) = total_size {
-        println!("Total file size: {:.2} MB", size as f64 / 1024.0 / 1024.0);
-    } else {
-        println!("Total file size: Unknown");
-    }
-
     let mut file = fs::File::create(&zip_path)?;
     let mut reader = response.into_reader();
     let mut buffer = [0; 65536];
     let mut downloaded = 0;
-    let mut last_percent = 0;
 
     loop {
         let bytes_read = reader.read(&mut buffer)?;
@@ -224,24 +189,19 @@ fn download_and_extract_model() -> anyhow::Result<()> {
         downloaded += bytes_read;
 
         if let Some(total) = total_size {
-            let percent = (downloaded * 100) / total;
-            if percent != last_percent {
-                print!("\rDownloading: {}% ({:.1} MB / {:.1} MB)", percent, downloaded as f64 / 1024.0 / 1024.0, total as f64 / 1024.0 / 1024.0);
-                let _ = io::stdout().flush();
-                last_percent = percent;
-            }
+            let val = downloaded as f32 / total as f32;
+            *download_progress.lock() = val;
+            *status.lock() = format!("Downloading: {:.1}% ({:.1} / {:.1} MB)", val * 100.0, downloaded as f32 / 1024.0 / 1024.0, total as f32 / 1024.0 / 1024.0);
         } else {
-            print!("\rDownloading: {:.1} MB", downloaded as f64 / 1024.0 / 1024.0);
-            let _ = io::stdout().flush();
+            *status.lock() = format!("Downloading: {:.1} MB", downloaded as f32 / 1024.0 / 1024.0);
         }
     }
-    println!("\nDownload completed. Extracting...");
+    *download_progress.lock() = 1.0;
 
-    // Open and extract zip
+    *status.lock() = "Download complete. Extracting model...".to_string();
     let zip_file = fs::File::open(&zip_path)?;
     let mut archive = zip::ZipArchive::new(zip_file)?;
 
-    // Check if the zip already contains a top-level directory "GAME-1.0.3-large-onnx"
     let mut has_toplevel = false;
     if archive.len() > 0 {
         if let Ok(entry) = archive.by_index(0) {
@@ -252,14 +212,15 @@ fn download_and_extract_model() -> anyhow::Result<()> {
     }
 
     let extract_dest = if has_toplevel {
-        models_base_dir.clone()
+        models_base_dir.to_path_buf()
     } else {
         models_base_dir.join("GAME-1.0.3-large-onnx")
     };
 
     fs::create_dir_all(&extract_dest)?;
+    let archive_len = archive.len();
 
-    for i in 0..archive.len() {
+    for i in 0..archive_len {
         let mut file = archive.by_index(i)?;
         let outpath = match file.enclosed_name() {
             Some(path) => extract_dest.join(path),
@@ -285,43 +246,255 @@ fn download_and_extract_model() -> anyhow::Result<()> {
                 fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
             }
         }
+        
+        *extract_progress.lock() = (i + 1) as f32 / archive_len as f32;
+        *status.lock() = format!("Extracting files: {} / {} ({}%)", i + 1, archive_len, ((i + 1) * 100) / archive_len);
     }
+    *extract_progress.lock() = 1.0;
 
-    println!("Extraction completed successfully.");
-    
-    // Clean up zip
+    *status.lock() = "Cleaning up installer files...".to_string();
     let _ = fs::remove_file(&zip_path);
     Ok(())
 }
 
-fn main() {
-    println!("====================================================");
-    println!("            Copycat Voice-to-MIDI Installer          ");
-    println!("====================================================");
+struct InstallerApp {
+    status: Arc<Mutex<String>>,
+    download_progress: Arc<Mutex<f32>>,
+    extract_progress: Arc<Mutex<f32>>,
+    is_running: Arc<Mutex<bool>>,
+    is_complete: Arc<Mutex<bool>>,
+    error_message: Arc<Mutex<Option<String>>>,
+    model_install_path: String,
+    clap_found: bool,
+    vst3_found: bool,
+    exe_dir: PathBuf,
+}
 
-    // Locate the folder of the running installer
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+impl InstallerApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Customize visuals
+        let mut visuals = egui::Visuals::dark();
+        visuals.widgets.active.bg_fill = egui::Color32::from_rgb(139, 92, 246); // purple
+        visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(124, 58, 237); // dark purple
+        visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(45, 55, 72); // Slate
+        cc.egui_ctx.set_visuals(visuals);
 
-    println!("Installer folder: {:?}", exe_dir);
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    // 1. Install CLAP/VST3 plugin files
-    match install_plugin_files(&exe_dir) {
-        Ok(_) => println!("Plugin installation phase finished."),
-        Err(e) => println!("Error during plugin installation phase: {}", e),
+        let clap_found = exe_dir.join("copycat.clap").exists();
+        let vst3_found = exe_dir.join("copycat.vst3").exists();
+
+        let default_parent_dir = {
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(profile) = std::env::var("USERPROFILE") {
+                    PathBuf::from(profile).join("copycat").join("models")
+                } else {
+                    PathBuf::from("C:\\").join("copycat").join("models")
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                if let Ok(home) = std::env::var("HOME") {
+                    PathBuf::from(home).join(".local").join("share").join("copycat").join("models")
+                } else {
+                    PathBuf::from("/tmp").join("copycat").join("models")
+                }
+            }
+        };
+
+        Self {
+            status: Arc::new(Mutex::new("Ready to install".to_string())),
+            download_progress: Arc::new(Mutex::new(0.0)),
+            extract_progress: Arc::new(Mutex::new(0.0)),
+            is_running: Arc::new(Mutex::new(false)),
+            is_complete: Arc::new(Mutex::new(false)),
+            error_message: Arc::new(Mutex::new(None)),
+            model_install_path: default_parent_dir.to_string_lossy().to_string(),
+            clap_found,
+            vst3_found,
+            exe_dir,
+        }
     }
+}
 
-    println!("\n----------------------------------------------------");
+impl eframe::App for InstallerApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Trigger UI updates during installation
+        if *self.is_running.lock() {
+            ctx.request_repaint();
+        }
 
-    // 2. Download and install ONNX model
-    match download_and_extract_model() {
-        Ok(_) => println!("Model download and extraction phase finished."),
-        Err(e) => println!("Error during model installation phase: {}", e),
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(10.0);
+                ui.heading(egui::RichText::new("Copycat Voice-to-MIDI").size(24.0).strong().color(egui::Color32::from_rgb(167, 139, 250)));
+                ui.label("AI Vocal Transcription Plugin & Checkpoint Installer");
+                ui.add_space(15.0);
+            });
+
+            // Group: File status
+            ui.group(|ui| {
+                ui.set_width(ui.available_width());
+                ui.label(egui::RichText::new("Plugin Source Status:").strong());
+                
+                ui.horizontal(|ui| {
+                    if self.clap_found {
+                        ui.label(egui::RichText::new(" ✔ ").color(egui::Color32::GREEN));
+                        ui.label("copycat.clap found");
+                    } else {
+                        ui.label(egui::RichText::new(" ❌ ").color(egui::Color32::LIGHT_RED));
+                        ui.label("copycat.clap not found in installer directory");
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    if self.vst3_found {
+                        ui.label(egui::RichText::new(" ✔ ").color(egui::Color32::GREEN));
+                        ui.label("copycat.vst3 found");
+                    } else {
+                        ui.label(egui::RichText::new(" ❌ ").color(egui::Color32::LIGHT_RED));
+                        ui.label("copycat.vst3 not found in installer directory");
+                    }
+                });
+            });
+
+            ui.add_space(10.0);
+
+            // Group: Directory Select
+            ui.group(|ui| {
+                ui.set_width(ui.available_width());
+                ui.label(egui::RichText::new("Model Destination Directory:").strong());
+                
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut self.model_install_path);
+                    if ui.add_enabled(!*self.is_running.lock() && !*self.is_complete.lock(), egui::Button::new("Browse...")).clicked() {
+                        if let Some(folder) = rfd::FileDialog::new()
+                            .set_directory(&self.model_install_path)
+                            .pick_folder()
+                        {
+                            self.model_install_path = folder.to_string_lossy().to_string();
+                        }
+                    }
+                });
+                ui.label(egui::RichText::new(format!(
+                    "Model will be downloaded to: {}/GAME-1.0.3-large-onnx",
+                    self.model_install_path.trim_end_matches('/')
+                )).size(11.0).color(egui::Color32::GRAY));
+            });
+
+            ui.add_space(15.0);
+
+            // Progress / Status Box
+            let status_msg = self.status.lock().clone();
+            let is_running = *self.is_running.lock();
+            let is_complete = *self.is_complete.lock();
+            let err_opt = self.error_message.lock().clone();
+
+            ui.group(|ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label("Status: ");
+                    ui.label(egui::RichText::new(&status_msg).strong());
+                });
+
+                if is_running {
+                    let dl = *self.download_progress.lock();
+                    let ext = *self.extract_progress.lock();
+
+                    ui.add_space(5.0);
+                    ui.label(format!("Downloading: {:.0}%", dl * 100.0));
+                    ui.add(egui::ProgressBar::new(dl).show_percentage());
+
+                    if dl >= 0.99 {
+                        ui.add_space(5.0);
+                        ui.label(format!("Extracting: {:.0}%", ext * 100.0));
+                        ui.add(egui::ProgressBar::new(ext).show_percentage());
+                    }
+                }
+
+                if is_complete {
+                    ui.add_space(5.0);
+                    ui.label(egui::RichText::new("✔ Installation was fully successful! You can load Copycat in your DAW now.").color(egui::Color32::GREEN).strong());
+                }
+
+                if let Some(ref err) = err_opt {
+                    ui.add_space(5.0);
+                    ui.label(egui::RichText::new(format!("❌ Installation Failed:\n{}", err)).color(egui::Color32::LIGHT_RED).strong());
+                }
+            });
+
+            ui.add_space(20.0);
+
+            // Button actions
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if is_complete || err_opt.is_some() {
+                        if ui.button("Close").clicked() {
+                            std::process::exit(0);
+                        }
+                    } else {
+                        let btn_text = if is_running { "Installing..." } else { "Start Installation" };
+                        let has_any_plugin = self.clap_found || self.vst3_found;
+                        let enabled = !is_running && has_any_plugin;
+
+                        let install_btn = ui.add_enabled(enabled, egui::Button::new(btn_text).min_size(egui::vec2(120.0, 30.0)));
+                        if install_btn.clicked() {
+                            let status = self.status.clone();
+                            let download_progress = self.download_progress.clone();
+                            let extract_progress = self.extract_progress.clone();
+                            let is_running = self.is_running.clone();
+                            let is_complete = self.is_complete.clone();
+                            let error_message = self.error_message.clone();
+                            let exe_dir = self.exe_dir.clone();
+                            let model_install_path = self.model_install_path.clone();
+
+                            *is_running.lock() = true;
+                            *is_complete.lock() = false;
+                            *error_message.lock() = None;
+
+                            std::thread::spawn(move || {
+                                let run = || -> anyhow::Result<()> {
+                                    install_plugin_files(&exe_dir, &status)?;
+                                    download_and_extract_model(&model_install_path, &status, &download_progress, &extract_progress)?;
+                                    Ok(())
+                                };
+
+                                match run() {
+                                    Ok(_) => {
+                                        *status.lock() = "Installation complete!".to_string();
+                                        *is_complete.lock() = true;
+                                    }
+                                    Err(e) => {
+                                        *status.lock() = format!("Failed: {}", e);
+                                        *error_message.lock() = Some(e.to_string());
+                                    }
+                                }
+                                *is_running.lock() = false;
+                            });
+                        }
+                    }
+                });
+            });
+        });
     }
+}
 
-    println!("====================================================");
-    println!("Installation process finished! You can now open your DAW.");
-    println!("====================================================");
+fn main() -> eframe::Result {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([540.0, 430.0])
+            .with_resizable(false)
+            .with_title("Copycat Installer"),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "org.openvpi.copycat.installer",
+        options,
+        Box::new(|cc| Ok(Box::new(InstallerApp::new(cc)))),
+    )
 }
