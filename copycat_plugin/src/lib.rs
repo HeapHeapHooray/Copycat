@@ -539,7 +539,8 @@ impl Plugin for Copycat {
                                             }
                                         });
                                     }
-                                    if ui.add_enabled(has_notes, egui::Button::new("🎵 Drag MIDI 🎵")).clicked() {
+                                    let btn = ui.add_enabled(has_notes, egui::Button::new("🎵 Drag MIDI 🎵"));
+                                    if btn.drag_started() {
                                         if let Some(ref notes) = *shared_state.transcribed_notes.lock() {
                                             let tempo = params.tempo.value();
                                             let dir = std::env::temp_dir().join("copycat-midi");
@@ -955,7 +956,13 @@ fn drag_midi_file(path: &std::path::Path) {
         enum_dadvise: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
     }
     #[repr(C)]
-    struct DataObj { vtbl: *const IDataObjectVtbl, refcount: u32, path_wide: *mut u16 }
+    struct DataObj {
+        vtbl: *const IDataObjectVtbl,
+        refcount: u32,
+        path_wide: *mut u16,
+        path_len: usize,
+        path_cap: usize,
+    }
 
     #[repr(C)]
     struct IDropSourceVtbl {
@@ -1016,9 +1023,13 @@ fn drag_midi_file(path: &std::path::Path) {
     unsafe {
         OleInitialize(null_mut());
 
-        let wide: Vec<u16> = path.to_string_lossy()
+        let mut wide: Vec<u16> = path.to_string_lossy()
             .encode_utf16().chain(std::iter::once(0)).collect();
-        let wide_ptr = wide.as_ptr() as *mut u16;
+        wide.shrink_to_fit();
+        let path_wide = wide.as_mut_ptr();
+        let path_len = wide.len();
+        let path_cap = wide.capacity();
+        std::mem::forget(wide); // Defer deallocation until COM release
 
     // IUnknown for IDataObject
     unsafe extern "system" fn do_query_interface(_this: *mut c_void, _riid: *const c_void, ppv: *mut *mut c_void) -> i32 {
@@ -1037,7 +1048,7 @@ fn drag_midi_file(path: &std::path::Path) {
         let obj = this as *mut DataObj;
         (*obj).refcount -= 1;
         if (*obj).refcount == 0 {
-            let _ = Vec::from_raw_parts((*obj).path_wide, 0, 0);
+            let _ = Vec::from_raw_parts((*obj).path_wide, (*obj).path_len, (*obj).path_cap);
             let _ = Box::from_raw(this as *mut DataObj);
             0
         } else {
@@ -1051,11 +1062,7 @@ fn drag_midi_file(path: &std::path::Path) {
         if fmt != CF_HDROP { return S_FALSE; }
 
         let obj = this as *mut DataObj;
-        let wide_len = {
-            let mut len = 0;
-            while *((*obj).path_wide.add(len)) != 0 { len += 1; }
-            len
-        };
+        let wide_len = (*obj).path_len - 1;
 
         #[repr(C)]
         struct DROPFILES { pFiles: u32, pt: (i32,i32), fNC: i32, fWide: i32 }
@@ -1155,7 +1162,9 @@ fn drag_midi_file(path: &std::path::Path) {
         let data_obj = Box::into_raw(Box::new(DataObj {
             vtbl: ido_vtbl,
             refcount: 1,
-            path_wide: wide_ptr,
+            path_wide,
+            path_len,
+            path_cap,
         }));
 
         // IDropSource stubs
