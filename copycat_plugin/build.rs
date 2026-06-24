@@ -19,7 +19,7 @@ fn main() {
     let ok = if cfg!(target_os = "windows") {
         download_powershell(url, &zip_path) && extract_powershell(&zip_path, &out_dir)
     } else {
-        download_curl(url, &zip_path) && extract_unzip(&zip_path, &out_dir)
+        download_curl(url, &zip_path) && extract_unzip(&zip_path, Path::new(&out_dir))
     };
 
     if ok && dll_path.exists() {
