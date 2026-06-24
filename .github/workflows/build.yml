@@ -63,12 +63,14 @@ jobs:
       - name: Copy onnxruntime to bundles
         shell: pwsh
         run: |
-          Copy-Item target/release/onnxruntime.dll target/bundled/
-          if (Test-Path target/bundled/copycat.vst3/Contents/x64-win) {
-            Copy-Item target/release/onnxruntime.dll target/bundled/copycat.vst3/Contents/x64-win/
-          }
-          if (Test-Path target/bundled/copycat.vst3/Contents/x86_64-win) {
-            Copy-Item target/release/onnxruntime.dll target/bundled/copycat.vst3/Contents/x86_64-win/
+          if (Test-Path target/release/onnxruntime.dll) {
+            Copy-Item target/release/onnxruntime.dll target/bundled/
+            if (Test-Path target/bundled/copycat.vst3/Contents/x64-win) {
+              Copy-Item target/release/onnxruntime.dll target/bundled/copycat.vst3/Contents/x64-win/
+            }
+            if (Test-Path target/bundled/copycat.vst3/Contents/x86_64-win) {
+              Copy-Item target/release/onnxruntime.dll target/bundled/copycat.vst3/Contents/x86_64-win/
+            }
           }
 
       - name: Upload artifacts
