@@ -1,7 +1,7 @@
 # Copycat — AI Voice-to-MIDI
 
 A VST3/CLAP plugin that transcribes vocal audio into MIDI notes using
-[GAME](https://github.com/openvpi/GAME).
+[GAME (Generative Adaptive MIDI Extractor)](https://github.com/openvpi/GAME).
 
 ![Copycat GUI](assets/copycat_GUI.png)
 
