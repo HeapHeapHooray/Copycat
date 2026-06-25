@@ -1,7 +1,9 @@
 # Copycat — AI Voice-to-MIDI
 
 A VST3/CLAP plugin that transcribes vocal audio into MIDI notes using
-[GAME (Generative Adaptive MIDI Extractor)](https://github.com/openvpi/GAME). Made with Gemini and Deepseek 🚀
+[GAME (Generative Adaptive MIDI Extractor)](https://github.com/openvpi/GAME). Specifically, it's based on my project [GAME.rs](https://github.com/HeapHeapHooray/GAME.rs). Made with Gemini and Deepseek 🚀  
+   
+Confirmed to fully work on FL Studio through Wine (Bottles) in Linux.
 
 ![Copycat GUI](assets/copycat_GUI.png)
 
