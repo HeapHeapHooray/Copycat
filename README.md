@@ -50,6 +50,36 @@ The package includes a one-click CLI installer (`copycat_installer`) that automa
 
 ---
 
+## How-to-use in FL Studio (Adapt accordingly to your DAW)
+
+### 1. Load the Plugin
+Load **Copycat** as an audio effect plugin on any mixer insert channel (e.g., your vocal channel).
+
+### 2. Configure Model Path
+In the plugin GUI, click the **Browse...** button under **Model Path** and select the folder where the checkpoint was installed:
+* **Windows**: `C:\Users\<YourUsername>\copycat\models\GAME-1.0.3-large-onnx`
+* **Linux**: `~/.local/share/copycat/models/GAME-1.0.3-large-onnx`
+
+### 3. Record or Load Audio
+* **Record**: Click **🔴 Record from DAW** in the plugin GUI, press play in FL Studio to play the vocal audio, and click **⏹ Stop Recording** once the performance is complete.
+* **Load File**: Alternatively, click **📂 Load Audio File...** to import a pre-recorded vocal file (`.wav`, `.mp3`, `.flac`, `.ogg`).
+
+### 4. Transcribe
+* Configure parameters like **BPM (Tempo)**, **Pitch/Seg Thresholds**, and **D3PM Steps**.
+* Click **⚡ TRANSCRIBE VOICE TO MIDI**. The status bar will show the transcription progress and notes count.
+
+### 5. Export / Use MIDI Notes
+* **Copy to Clipboard (FL Studio specific)**: Click **📋 Copy to Clipboard**. Open the Piano Roll of your target instrument channel (e.g., 3xOsc, Serum), click the Piano Roll options menu at the top-left, and select **File -> Paste from MIDI clipboard** (or press standard `Shift+Ctrl+V` shortcut).
+* **Export File**: Click **💾 Export MIDI** to save a standard `.mid` file to disk.
+* **Real-time Playback**: Since Copycat is loaded as an audio effect, you must route its MIDI output to your target instrument inside FL Studio:
+  1. Open the Copycat plugin window, and click the **Gear icon** (top-left) to open the Wrapper settings.
+  2. Under **Output Port** (in the Wrapper's detailed settings), set it to a port number (e.g., `1`).
+  3. Load your target synthesizer (e.g., Serum, Kontakt, or any VST/CLAP instrument).
+  4. Open the synthesizer's Wrapper settings, and set its **Input Port** to match the same number (e.g., `1`).
+  5. Play your track in FL Studio to hear the transcribed notes play through the synth in real-time.
+
+---
+
 ## Building from Source
 
 ### Prerequisites
