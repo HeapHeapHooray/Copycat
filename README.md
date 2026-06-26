@@ -22,7 +22,7 @@ Built with [nih-plug](https://github.com/robbert-vdh/nih-plug).
 
 ## Installation
 
-Download the release archive for your platform from [GitHub Releases](https://github.com/openvpi/Copycat/releases).
+Download the release archive for your platform from [GitHub Releases](https://github.com/HeapHeapHooray/Copycat/releases).
 
 The package includes a one-click CLI installer (`copycat_installer`) that automates setting up the plugin and downloading the required model files.
 
