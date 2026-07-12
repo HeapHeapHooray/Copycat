@@ -104,11 +104,20 @@ jobs:
         run: |
           cd target/bundled
           ./copycat_installer.exe --silent
-          # Verify installation (since it runs as non-admin, it falls back to user paths)
+          # Verify installation (check system path first, then user fallback)
+          $commonFiles = $env:COMMONPROGRAMFILES
           $localAppData = $env:LOCALAPPDATA
           $userProfile = $env:USERPROFILE
-          if (!(Test-Path "$localAppData\Programs\Common\CLAP\copycat.clap")) { throw "CLAP not installed" }
-          if (!(Test-Path "$localAppData\Programs\Common\VST3\copycat.vst3")) { throw "VST3 not installed" }
+          $clapPaths = @(
+            "$commonFiles\CLAP\copycat.clap",
+            "$localAppData\Programs\Common\CLAP\copycat.clap"
+          )
+          $vst3Paths = @(
+            "$commonFiles\VST3\copycat.vst3",
+            "$localAppData\Programs\Common\VST3\copycat.vst3"
+          )
+          if (-not ($clapPaths | Where-Object { Test-Path $_ } | Select-Object -First 1)) { throw "CLAP not installed" }
+          if (-not ($vst3Paths | Where-Object { Test-Path $_ } | Select-Object -First 1)) { throw "VST3 not installed" }
           if (!(Test-Path "$userProfile\copycat\models\GAME-1.0.3-large-onnx")) { throw "Model not installed" }
 
       - name: Upload artifacts
