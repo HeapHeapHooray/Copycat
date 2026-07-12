@@ -41,6 +41,15 @@ jobs:
           cargo build --package copycat_installer --release
           cp target/release/copycat_installer target/bundled/
 
+      - name: Test Installer Silently
+        run: |
+          cd target/bundled/
+          ./copycat_installer --silent
+          # Verify installation
+          test -f ~/.clap/copycat.clap
+          test -d ~/.vst3/copycat.vst3
+          test -d ~/.local/share/copycat/models/GAME-1.0.3-large-onnx
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -89,6 +98,18 @@ jobs:
               if (Test-Path $d) { Copy-Item $dll.FullName $d/ }
             }
           }
+
+      - name: Test Installer Silently
+        shell: pwsh
+        run: |
+          cd target/bundled
+          ./copycat_installer.exe --silent
+          # Verify installation (since it runs as non-admin, it falls back to user paths)
+          $localAppData = $env:LOCALAPPDATA
+          $userProfile = $env:USERPROFILE
+          if (!(Test-Path "$localAppData\Programs\Common\CLAP\copycat.clap")) { throw "CLAP not installed" }
+          if (!(Test-Path "$localAppData\Programs\Common\VST3\copycat.vst3")) { throw "VST3 not installed" }
+          if (!(Test-Path "$userProfile\copycat\models\GAME-1.0.3-large-onnx")) { throw "Model not installed" }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

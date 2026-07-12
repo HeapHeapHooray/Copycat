@@ -26,6 +26,15 @@ Download the release archive for your platform from [GitHub Releases](https://gi
 
 The package includes a one-click CLI installer (`copycat_installer`) that automates setting up the plugin and downloading the required model files.
 
+```
+Usage: copycat_installer [OPTIONS]
+
+Options:
+  -s, --silent          Run the installer silently without opening the GUI
+  -m, --model-dir <DIR> Specify the destination directory for the model (default: platform-specific path)
+  -h, --help            Print help information
+```
+
 ### Windows
 1. Extract the release ZIP.
 2. Run `copycat_installer.exe`.

@@ -616,6 +616,32 @@ fn download_and_extract_model(
     Ok(())
 }
 
+fn get_exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+}
+
+fn get_default_model_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            PathBuf::from(profile).join("copycat").join("models")
+        } else {
+            PathBuf::from("C:\\").join("copycat").join("models")
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".local").join("share").join("copycat").join("models")
+        } else {
+            PathBuf::from("/tmp").join("copycat").join("models")
+        }
+    }
+}
+
 struct InstallerApp {
     status: Arc<Mutex<String>>,
     download_progress: Arc<Mutex<f32>>,
@@ -638,32 +664,10 @@ impl InstallerApp {
         visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(45, 55, 72); // Slate
         cc.egui_ctx.set_visuals(visuals);
 
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
+        let exe_dir = get_exe_dir();
         let clap_found = robust_exists(&exe_dir.join("copycat.clap"));
         let vst3_found = robust_exists(&exe_dir.join("copycat.vst3"));
-
-        let default_parent_dir = {
-            #[cfg(target_os = "windows")]
-            {
-                if let Ok(profile) = std::env::var("USERPROFILE") {
-                    PathBuf::from(profile).join("copycat").join("models")
-                } else {
-                    PathBuf::from("C:\\").join("copycat").join("models")
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                if let Ok(home) = std::env::var("HOME") {
-                    PathBuf::from(home).join(".local").join("share").join("copycat").join("models")
-                } else {
-                    PathBuf::from("/tmp").join("copycat").join("models")
-                }
-            }
-        };
+        let default_parent_dir = get_default_model_dir();
 
         Self {
             status: Arc::new(Mutex::new("Ready to install".to_string())),
@@ -843,6 +847,137 @@ impl eframe::App for InstallerApp {
 }
 
 fn main() -> eframe::Result {
+    let mut args = std::env::args().skip(1);
+    let mut silent = false;
+    let mut model_dir: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-s" | "--silent" => {
+                silent = true;
+            }
+            "-m" | "--model-dir" => {
+                if let Some(val) = args.next() {
+                    model_dir = Some(val);
+                } else {
+                    eprintln!("Error: --model-dir requires a directory path");
+                    std::process::exit(1);
+                }
+            }
+            "-h" | "--help" => {
+                println!("Usage: copycat_installer [OPTIONS]");
+                println!();
+                println!("Options:");
+                println!("  -s, --silent          Run the installer silently without opening the GUI");
+                println!("  -m, --model-dir <DIR> Specify the destination directory for the model (default: platform-specific path)");
+                println!("  -h, --help            Print help information");
+                std::process::exit(0);
+            }
+            unknown => {
+                eprintln!("Error: Unknown option '{}'", unknown);
+                eprintln!("Run with -h or --help for usage information");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if silent {
+        let exe_dir = get_exe_dir();
+        let clap_found = robust_exists(&exe_dir.join("copycat.clap"));
+        let vst3_found = robust_exists(&exe_dir.join("copycat.vst3"));
+
+        if !clap_found && !vst3_found {
+            eprintln!("Error: No plugin files (copycat.clap or copycat.vst3) found in installer directory.");
+            std::process::exit(1);
+        }
+
+        let model_install_path = model_dir.unwrap_or_else(|| {
+            get_default_model_dir().to_string_lossy().to_string()
+        });
+
+        println!("Starting Copycat installation (silent mode)...");
+        println!("Installer directory: {}", exe_dir.display());
+        println!("Model destination: {}/GAME-1.0.3-large-onnx", model_install_path.trim_end_matches('/'));
+
+        let status = Arc::new(Mutex::new("Ready to install".to_string()));
+        let download_progress = Arc::new(Mutex::new(0.0));
+        let extract_progress = Arc::new(Mutex::new(0.0));
+        let is_running = Arc::new(Mutex::new(true));
+        let is_complete = Arc::new(Mutex::new(false));
+        let error_message = Arc::new(Mutex::new(None));
+
+        let status_c = status.clone();
+        let download_progress_c = download_progress.clone();
+        let extract_progress_c = extract_progress.clone();
+        let is_running_c = is_running.clone();
+        let is_complete_c = is_complete.clone();
+        let error_message_c = error_message.clone();
+        let exe_dir_c = exe_dir.clone();
+        let model_install_path_c = model_install_path.clone();
+
+        std::thread::spawn(move || {
+            let run = || -> anyhow::Result<()> {
+                install_plugin_files(&exe_dir_c, &status_c)?;
+                download_and_extract_model(&model_install_path_c, &status_c, &download_progress_c, &extract_progress_c)?;
+                Ok(())
+            };
+
+            match run() {
+                Ok(_) => {
+                    *status_c.lock() = "Installation complete!".to_string();
+                    *is_complete_c.lock() = true;
+                }
+                Err(e) => {
+                    *status_c.lock() = format!("Failed: {}", e);
+                    *error_message_c.lock() = Some(e.to_string());
+                }
+            }
+            *is_running_c.lock() = false;
+        });
+
+        let mut last_status = String::new();
+        let mut last_print_time = std::time::Instant::now() - std::time::Duration::from_secs(10);
+
+        loop {
+            let status_str = status.lock().clone();
+            let dl = *download_progress.lock();
+            let ext = *extract_progress.lock();
+
+            let mut should_print = status_str != last_status;
+
+            if should_print {
+                let is_progress = status_str.starts_with("Downloading:") || status_str.starts_with("Extracting files:");
+                if is_progress {
+                    let now = std::time::Instant::now();
+                    let is_done = if status_str.starts_with("Downloading:") { dl >= 0.99 } else { ext >= 0.99 };
+                    if !is_done && now.duration_since(last_print_time).as_secs_f32() < 2.0 {
+                        should_print = false;
+                    }
+                }
+            }
+
+            if should_print {
+                println!("{}", status_str);
+                last_status = status_str;
+                last_print_time = std::time::Instant::now();
+            }
+
+            if !*is_running.lock() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let err_opt = error_message.lock().clone();
+        if let Some(err) = err_opt {
+            eprintln!("Error during installation: {}", err);
+            std::process::exit(1);
+        } else {
+            println!("Installation was fully successful!");
+            std::process::exit(0);
+        }
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([540.0, 430.0])
